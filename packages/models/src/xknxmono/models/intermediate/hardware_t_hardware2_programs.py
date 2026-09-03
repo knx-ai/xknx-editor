@@ -1,0 +1,20 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxmono.models.intermediate.hardware2_program_t import Hardware2Program
+
+
+@dataclass(slots=True, kw_only=True)
+class HardwareHardware2Programs:
+    class Meta:
+        global_type = False
+
+    hardware2_program: list[Hardware2Program] = field(
+        default_factory=list,
+        metadata={
+            "name": "Hardware2Program",
+            "type": "Element",
+            "min_occurs": 1,
+        },
+    )

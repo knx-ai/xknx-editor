@@ -1,0 +1,28 @@
+exclude = ["**/files", "**/intermediate", "**/dist", "**/.venv", "**/build"]
+
+[lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+]
+
+[lint.isort]
+known-first-party = ["xknxmono"]
+
+[lint.per-file-ignores]
+# imgui_bundle must be monkeypatched before hello_imgui is imported.
+"apps/editor-gui/src/editor_gui/main.py" = ["E402"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

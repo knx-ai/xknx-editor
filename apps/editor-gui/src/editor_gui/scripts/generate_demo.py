@@ -1,0 +1,99 @@
+"""Generate the demo.xknx project file using devices from the catalog.
+
+Builds a small sample project (one area/line + a few devices) directly on the project package, so it
+does not depend on the GUI layer. Devices are product-centric: each demo application is resolved to a
+catalog product, and the device stores that product's refs.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from editor_gui.device import Device as _Device
+from xknxmono.catalog import CatalogService
+from xknxmono.project import ProjectService
+
+_INSTALLATION = 0
+
+
+@dataclass
+class DemoDevice:
+    application_id: str
+    name: str
+    individual_address: str  # "area.line.device"
+
+
+DEMO_DEVICES = [
+    DemoDevice("M-0001_A-9082-02-0908", "Shutter Actuator 4x", "1.1.1"),
+    DemoDevice("M-0001_A-9801-83-D585", "Roller Shutter Switch 4x", "1.1.2"),
+    DemoDevice("M-0001_A-980D-03-EF67", "Binary Input 2x", "1.1.3"),
+    DemoDevice("M-0008_A-7072-21-5CC3-O000A", "Button Interface 2-gang", "1.1.4"),
+    DemoDevice("M-0001_A-0003-32-73C9", "Line Coupler", "1.1.5"),
+]
+
+
+def generate_demo(output_path: Path, catalog_path: Path) -> None:
+    if output_path.exists():
+        output_path.unlink()
+
+    if not catalog_path.exists():
+        print(f"Error: catalog not found at {catalog_path}")
+        print("Run 'uv run generate-catalog' first")
+        return
+
+    catalog = CatalogService(catalog_path)
+    products = {
+        p.application_id: p for p in catalog.list_products() if p.application_id
+    }
+
+    svc = ProjectService()
+    pid = svc.create(output_path, "P-DEMO")
+
+    area_id = svc.create_area(pid, _INSTALLATION, 1, "Building")
+    line_id = svc.create_line(pid, area_id, 1, "Floor 1")
+    segment_id = _segment_of_line(svc, pid, line_id)
+    print("Created: Area 1 (Building) / Line 1.1 (Floor 1)")
+
+    for demo in DEMO_DEVICES:
+        product = products.get(demo.application_id)
+        app = catalog.get_application(demo.application_id)
+        if product is None or app is None:
+            print(f"Warning: {demo.application_id} not in catalog, skipping")
+            continue
+        octet = int(demo.individual_address.split(".")[2])
+        init_device = _Device(node_id=0, name=demo.name, app=app, individual_address="")
+        module_instances = init_device.get_module_instances()
+        svc.add_device(
+            pid,
+            segment_id,
+            product.product_ref_id,
+            address=octet,
+            name=demo.name,
+            hardware2program_ref_id=product.hardware2program_ref_id,
+            module_instances=module_instances if module_instances else None,
+        )
+        print(f"Added: {demo.name} ({demo.individual_address})")
+
+    svc.close(pid)
+    print(f"\nDemo project saved to: {output_path}")
+
+
+def _segment_of_line(svc: ProjectService, pid: str, line_id: int) -> int:
+    for area in svc.topology(pid, _INSTALLATION).areas:
+        for line in area.lines:
+            if line.id == line_id:
+                return line.segments[0].id
+    raise RuntimeError(f"line {line_id} not found")
+
+
+def main() -> None:
+    from editor_gui.settings import config_dir
+
+    base_path = Path(__file__).parent.parent.parent.parent
+    output_path = base_path / "demo.xknx"
+    catalog_path = config_dir() / "catalog.xknxcatalog"
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    generate_demo(output_path, catalog_path)
+
+
+if __name__ == "__main__":
+    main()

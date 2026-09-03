@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "1b84e21edd3e0dee871411f6fa0600e37f55488a",
+  "separate-pull-requests": true,
+  "bump-minor-pre-major": true,
+  "pull-request-title-pattern": "chore(${component}): release ${version}",
+  "packages": {
+    "packages/catalog": { "release-type": "python", "component": "xknx-catalog" },
+    "packages/keyring": { "release-type": "python", "component": "xknx-keyring" },
+    "packages/models": { "release-type": "python", "component": "xknx-models" },
+    "packages/product": { "release-type": "python", "component": "xknx-product" },
+    "packages/project": { "release-type": "python", "component": "xknx-project" },
+    "apps/editor-gui": { "release-type": "python", "component": "editor-gui" }
+  }
+}

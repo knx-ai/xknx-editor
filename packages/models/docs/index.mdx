@@ -1,0 +1,48 @@
+---
+title: Quick Start
+description: KNX XML schema bindings and version detection.
+icon: Zap
+---
+
+`xknx-models` is the foundation layer of the xknx toolkit. It provides fully typed Python classes for all KNX project XML formats, generated from the official KNX schemas using [xsdata](https://xsdata.readthedocs.io), plus helpers for loading, detecting, and serializing those documents.
+
+## Supported versions
+
+Schema versions **10, 11, 12, 13, 14, 20, 21, 22, and 23** are all supported. Each version is available as its own sub-module (`v10` through `v23`), giving you static type coverage regardless of which ETS export you're working with.
+
+## Installation
+
+```bash
+pip install xknx-models
+```
+
+## Usage
+
+```python
+from xknxmono.models import load_xml, serialize_xml, detect_version
+
+# Auto-detect version and parse
+knx = load_xml(xml_bytes)
+
+# Explicit version
+knx = load_xml(xml_bytes, version="20")
+
+# Round-trip back to XML
+xml_out = serialize_xml(knx, version="20")
+
+# Inspect version without parsing
+version = detect_version(xml_bytes)  # e.g. "20"
+```
+
+## API reference
+
+| Symbol                        | Description                                                   |
+| ----------------------------- | ------------------------------------------------------------- |
+| `load_xml(source, version?)`  | Parse XML bytes into a typed `Knx` object                     |
+| `serialize_xml(obj, version)` | Serialize a `Knx` object back to XML bytes                    |
+| `detect_version(xml_bytes)`   | Extract the schema version from the XML namespace declaration |
+| `get_model_class(version)`    | Return the `Knx` dataclass for a given version string         |
+| `SUPPORTED_VERSIONS`          | Frozenset of all supported version strings                    |
+| `VersionError`                | Raised when a version cannot be detected or is unsupported    |
+
+Version sub-modules (`v10`–`v14`, `v20`–`v23`) are re-exported from the package root and contain the full xsdata-generated class hierarchy for that schema version.

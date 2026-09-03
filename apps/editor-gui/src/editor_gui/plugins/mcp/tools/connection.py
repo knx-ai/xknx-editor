@@ -1,0 +1,238 @@
+# The @mcp.tool decorator registers each tool via its side effect, not a direct call.
+# pyright: reportUnusedFunction=false
+"""Connection and programming tools (BUS): connect/scan/disconnect, program/evaluate/assign.
+
+Bus operations go through the connection service, which schedules onto the KNX event loop and returns
+a ``concurrent.futures.Future``; these tools await that future. Any device object needed to build the
+request is fetched on the imgui thread first (``ctx.run_on_ui``).
+"""
+
+from __future__ import annotations
+
+import time
+from typing import TYPE_CHECKING, Any, Literal
+
+from fastmcp.exceptions import ToolError
+
+from editor_gui.plugins.mcp.context import McpContext, make_tool
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
+
+    from editor_gui.device import Device
+
+# Download scopes (schema enum); maps to xknxmono.download.scope.DownloadScope in _resolve_scope.
+Scope = Literal["FULL", "PARAMETERS", "GROUP_COMMUNICATION", "APPLICATION", "UNLOAD"]
+
+
+def _resolve_scope(scope: str | None) -> Any:
+    from xknxmono.download.scope import DownloadScope
+
+    if scope is None:
+        return DownloadScope.FULL
+    try:
+        return DownloadScope[scope.upper()]
+    except KeyError as exc:
+        valid = ", ".join(s.name for s in DownloadScope)
+        raise ToolError(f"unknown scope {scope!r}; expected one of: {valid}") from exc
+
+
+def register(mcp: FastMCP, ctx: McpContext) -> None:
+    tool = make_tool(mcp, ctx)
+    conn = ctx.connection_plugin
+    service = ctx.api.connection
+
+    def _ensure_connected() -> None:
+        if ctx.api.connection.xknx is None:
+            raise ToolError(
+                "no KNX connection; connect first with connection_connect (configured gateway) "
+                "or connection_scan + connection_connect_gateway"
+            )
+
+    def _device(node_id: int) -> Device:
+        device = ctx.run_locked(lambda: ctx.api.project.find_device_by_node_id(node_id))
+        if device is None:
+            raise ToolError(
+                f"no device with node_id {node_id}; call project_list_devices for valid ids"
+            )
+        return device
+
+    def _programmable_device(node_id: int) -> tuple[Device, Any]:
+        """Precondition-check a device for a bus operation and build its GroupCommunication.
+
+        The download must include the project's group-address/association data (the GUI supplies it);
+        building it reads project links, so it happens on the imgui thread with the device. Raises a
+        specific error for each distinct fix (no connection / unknown device / no address)."""
+        _ensure_connected()
+        device = _device(node_id)
+        if not device.individual_address:
+            raise ToolError(
+                f"device {node_id} has no individual address; set one with "
+                "project_set_individual_address before programming"
+            )
+        group_communication = ctx.run_locked(
+            lambda: ctx.api.project.group_communication_for(device)
+        )
+        return device, group_communication
+
+    @tool
+    def connection_status() -> dict[str, Any]:
+        """Current connection state and target."""
+        return {
+            "state": conn.state.value,
+            "connected": conn.connected,
+            "controller_ip": conn.controller_ip,
+            "multicast_group": conn.multicast_group,
+            "routing": conn.is_routing,
+        }
+
+    @tool
+    def connection_configure(
+        controller_ip: str, multicast_group: str = "", routing: bool = False
+    ) -> dict[str, str]:
+        """Set and persist the gateway/connection settings (applied on the next connect)."""
+        conn.configure(controller_ip, multicast_group, routing)
+        return {"status": "configured"}
+
+    @tool
+    def connection_scan(timeout: float = 6.0) -> dict[str, Any]:
+        """Discover KNX gateways on the network (``timeout`` in seconds).
+
+        Returns ``{complete, count, gateways}``; ``complete`` is false if the timeout elapsed while a
+        scan was still running (the gateway list may then be incomplete). Connect with
+        connection_connect_gateway(ip)."""
+        conn.scan()
+        deadline = time.monotonic() + timeout
+        while conn.scanning and time.monotonic() < deadline:
+            time.sleep(0.1)
+        gateways = [
+            {
+                "name": g.name,
+                "ip": g.ip_addr,
+                "port": g.port,
+                "individual_address": str(g.individual_address)
+                if g.individual_address
+                else None,
+                "supports_tunnelling": g.supports_tunnelling,
+                "supports_routing": g.supports_routing,
+                "supports_secure": g.supports_secure,
+            }
+            for g in conn.gateways
+        ]
+        return {
+            "complete": not conn.scanning,
+            "count": len(gateways),
+            "gateways": gateways,
+        }
+
+    def _await_connect(timeout: float) -> dict[str, Any]:
+        from editor_gui.plugins.connection.plugin import ConnectionState
+
+        deadline = time.monotonic() + timeout
+        while conn.state == ConnectionState.CONNECTING and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if conn.state != ConnectionState.CONNECTED:
+            raise ToolError(f"connect failed (state: {conn.state.value})")
+        return {"state": conn.state.value, "connected": True}
+
+    @tool
+    def connection_connect(timeout: float = 15.0) -> dict[str, Any]:
+        """Connect using the configured gateway IP (tunneling). Waits until connected or fails."""
+        conn.connect()
+        return _await_connect(timeout)
+
+    @tool
+    def connection_connect_gateway(ip: str, timeout: float = 15.0) -> dict[str, Any]:
+        """Connect to a discovered gateway by IP (run connection_scan first). Waits for the result."""
+        if not conn.connect_to_gateway_by_ip(ip):
+            raise ToolError(
+                f"no scanned gateway with ip {ip!r}; run connection_scan first"
+            )
+        return _await_connect(timeout)
+
+    @tool
+    def connection_disconnect() -> dict[str, Any]:
+        """Disconnect from the bus. Returns the resulting connection state."""
+        conn.disconnect()
+        return {"status": "disconnecting", "state": conn.state.value}
+
+    @tool
+    def connection_program_device(
+        node_id: int, scope: Scope | None = None, timeout: float = 300.0
+    ) -> dict[str, Any]:
+        """Download the device's application/parameters/links onto the bus (``timeout`` seconds).
+
+        Needs an open connection and the device's individual address, and the device must physically
+        be on the bus. NEW device (first commissioning): set the address in the project
+        (project_set_individual_address), assign it to the device in programming mode
+        (connection_assign_individual_address), then program with scope FULL. ALREADY-programmed
+        device: run connection_evaluate_device first to preview the diff. ``scope``: FULL (default)
+        or a partial scope name (see status.capabilities.download_scopes)."""
+        device, group_communication = _programmable_device(node_id)
+        future = service.program_device(
+            device, _resolve_scope(scope), group_communication
+        )
+        if future is None:
+            raise ToolError("programming could not be scheduled (no connection)")
+        future.result(timeout=timeout)
+        return {"status": "programmed", "node_id": node_id}
+
+    @tool
+    def connection_evaluate_device(
+        node_id: int, scope: Scope | None = None, timeout: float = 120.0
+    ) -> dict[str, Any]:
+        """Preview what a download would change on an ALREADY-programmed device (``timeout`` seconds).
+
+        Reads the live device point-to-point and diffs it against the generated image. Meaningful
+        only for a device that is already commissioned and answers at its individual address — for a
+        NEW/virgin device it fails (nothing responds), so skip it and program directly with scope
+        FULL. Needs an open connection and the device's individual address."""
+        device, group_communication = _programmable_device(node_id)
+        future = service.evaluate_device(
+            device, _resolve_scope(scope), group_communication
+        )
+        if future is None:
+            raise ToolError("evaluation could not be scheduled (no connection)")
+        report = future.result(timeout=timeout)
+        return {
+            "node_id": node_id,
+            "changed_bytes": report.total_changed_bytes,
+            "changed_segments": len(report.changed_segments),
+            "changed_properties": len(report.changed_properties),
+            "summary": report.summary(),
+        }
+
+    @tool
+    def connection_assign_individual_address(
+        node_id: int, timeout: float = 30.0
+    ) -> dict[str, Any]:
+        """Write the device's project individual address to a device in programming mode.
+
+        Needs an open connection and a device in programming mode on the bus. ``timeout`` seconds."""
+        _ensure_connected()
+        device = _device(node_id)
+        if not device.individual_address:
+            raise ToolError(
+                f"device {node_id} has no individual address; set one with "
+                "project_set_individual_address first"
+            )
+        future = service.assign_individual_address_for_device(device)
+        if future is None:
+            raise ToolError("assignment could not be scheduled (no connection)")
+        future.result(timeout=timeout)
+        return {
+            "status": "assigned",
+            "node_id": node_id,
+            "address": device.individual_address,
+        }
+
+    @tool
+    def connection_read_programming_mode_devices(
+        timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        """Read the individual addresses of devices currently in programming mode (needs a connection)."""
+        future = service.read_programming_mode_devices()
+        if future is None:
+            raise ToolError("not connected")
+        addresses = future.result(timeout=timeout)
+        return {"addresses": [str(a) for a in addresses]}

@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+from editor_gui.plugins.base import Logger, PanelDefinition, PluginAPI
+from editor_gui.plugins.catalog.online_catalog import (
+    CATALOG_LANGUAGES,
+    OnlineCatalogError,
+)
+from editor_gui.plugins.catalog.strings import S
+from editor_gui.plugins.catalog.ui import CatalogPanel
+
+if TYPE_CHECKING:
+    from editor_gui.plugins.catalog.online_catalog import OnlineCatalogItem
+    from xknxmono.catalog import ProductSummary
+
+
+class CatalogPlugin:
+    name = "catalog"
+
+    def __init__(self, api: PluginAPI) -> None:
+        self._api = api
+        self._log = Logger(api.log, "catalog")
+        self._panel = CatalogPanel(
+            get_products=api.catalog.get_products,
+            on_select=self._on_select,
+            get_online_manufacturers=api.catalog.online_manufacturers,
+            on_online_refresh=self._refresh_online,
+            fetch_online_items=self._fetch_online_items,
+            download_online_item=self._download_online_item,
+            language_options=CATALOG_LANGUAGES,
+            get_language=lambda: api.catalog.online_language,
+            set_language=api.catalog.set_online_language,
+            get_missing_app_count=self._missing_app_count,
+            fetch_missing_apps=self._fetch_missing_apps,
+            build_online_index=self._build_online_index,
+            get_online_index_status=api.catalog.online_index_status,
+            search_online_products=api.catalog.search_online_products,
+        )
+        self._panels = [
+            PanelDefinition(
+                name="catalog",
+                label=S.PANEL_CATALOG,
+                dock="LeftSpace",
+                render=self._panel.render,
+            ),
+        ]
+
+    def _notify(self, text: str) -> None:
+        if self._api.notify is not None:
+            self._api.notify(text)
+
+    def _on_select(self, product: ProductSummary) -> None:
+        # "Add device" needs a project to add into; without one add_device is a silent no-op, so give
+        # explicit feedback instead of the button appearing to do nothing.
+        if not self._api.project.is_open:
+            self._log.warning(
+                "cannot add device: no project open", product=product.product_ref_id
+            )
+            self._notify(S.CATALOG_ADD_NEEDS_PROJECT)
+            return
+        if product.application_id is None:
+            self._log.warning(
+                "product has no application", product=product.product_ref_id
+            )
+            self._notify(S.CATALOG_ADD_NO_APP)
+            return
+        app = self._api.catalog.get_application(product.application_id)
+        if app is None:
+            self._log.warning(
+                "application not found", application_id=product.application_id
+            )
+            self._notify(S.CATALOG_ADD_NO_APP)
+            return
+
+        device_id = self._api.project.add_device(
+            product_ref_id=product.product_ref_id,
+            hardware2program_ref_id=product.hardware2program_ref_id,
+            name=app.name,
+            app=app,
+        )
+        if device_id:
+            self._log.info("device added", name=app.name, id=device_id)
+            self._notify(S.CATALOG_ADD_OK.format(name=app.name))
+
+    def _refresh_online(self) -> None:
+        """Fetch the online manufacturer list (called on a worker thread)."""
+        try:
+            manufacturers = self._api.catalog.refresh_online_manufacturers()
+        except OnlineCatalogError as exc:
+            self._log.error("online catalog refresh failed", error=str(exc))
+            raise
+        self._log.info("online catalog manufacturers loaded", count=len(manufacturers))
+
+    def _fetch_online_items(self, manufacturer_id: int) -> list[OnlineCatalogItem]:
+        """Fetch a manufacturer's downloadable products (called on a worker thread)."""
+        try:
+            items = self._api.catalog.online_catalog_items(manufacturer_id)
+        except OnlineCatalogError as exc:
+            self._log.error(
+                "online catalog index failed",
+                manufacturer=manufacturer_id,
+                error=str(exc),
+            )
+            raise
+        self._log.info(
+            "online catalog products loaded",
+            manufacturer=manufacturer_id,
+            count=len(items),
+        )
+        return items
+
+    def _download_online_item(self, item_id: str) -> None:
+        """Download a single product's ``.knxprod`` and import it (called on a worker thread)."""
+        try:
+            added = self._api.catalog.download_online_products([item_id])
+        except OnlineCatalogError as exc:
+            self._log.error(
+                "online product download failed", item=item_id, error=str(exc)
+            )
+            raise
+        self._log.info("online product imported", item=item_id, added=len(added))
+
+    def _build_online_index(
+        self,
+        progress_cb: Callable[[int, int], None],
+        should_cancel: Callable[[], bool],
+    ) -> None:
+        """Build/refresh the full online product index, logging start and result so the operation
+        is visible in the Log. Called on a worker thread after the manufacturer list is fetched."""
+        self._log.info("online product index build started")
+        try:
+            status = self._api.catalog.build_online_index(progress_cb, should_cancel)
+        except OnlineCatalogError as exc:
+            self._log.error("online product index build failed", error=str(exc))
+            raise
+        self._log.info(
+            "online product index built",
+            manufacturers=status.manufacturers,
+            products=status.products,
+        )
+
+    def _missing_app_count(self) -> int:
+        return len(self._api.project.missing_program_refs())
+
+    def _fetch_missing_apps(self) -> None:
+        """Download+import online-catalog products for project devices whose application is missing.
+
+        A device's ``hardware2program_ref_id`` (``M-0002_H-…_HP-…``) is a prefix of the matching
+        online catalog item id, so each missing ref maps to exactly one product. Called on a worker
+        thread (network + import)."""
+        refs = self._api.project.missing_program_refs()
+        by_mfr: dict[int, list[str]] = {}
+        for ref in refs:
+            try:
+                mid = int(
+                    ref[2:6], 16
+                )  # "M-0083_…" -> 0x0083 -> 131 (hex, not decimal)
+            except ValueError:
+                continue
+            by_mfr.setdefault(mid, []).append(ref)
+        item_ids: list[str] = []
+        for mid, mrefs in by_mfr.items():
+            try:
+                items = self._api.catalog.online_catalog_items(mid)
+            except OnlineCatalogError as exc:
+                self._log.error("online index failed", manufacturer=mid, error=str(exc))
+                continue
+            for ref in mrefs:
+                match = next((it for it in items if it.id.startswith(ref)), None)
+                if match is not None:
+                    item_ids.append(match.id)
+                else:
+                    self._log.warning("no online product for application", ref=ref)
+        if item_ids:
+            with self._api.catalog.io_lock:
+                added = self._api.catalog.download_online_products(item_ids)
+            self._log.info(
+                "fetched missing applications", products=len(item_ids), added=len(added)
+            )
+        # rebuild=True: rebuild the device views here on this worker thread (behind the shared lock),
+        # not lazily on the next UI frame — otherwise the full DynamicUI re-parse freezes the UI.
+        self._api.project.refresh_catalog_resolution(rebuild=True)
+
+    @property
+    def panels(self) -> list[PanelDefinition]:
+        return self._panels
+
+    def on_load(self) -> None:
+        pass
+
+    def on_unload(self) -> None:
+        pass

@@ -1,0 +1,65 @@
+---
+title: Quick Start
+description: Read and validate .knxprod device archives.
+icon: Zap
+---
+
+`xknx-product` reads `.knxprod` archives — the ZIP-based format ETS uses to distribute KNX device definitions. It validates the archive structure, exposes the embedded XMLs, and parses application programs into typed Python objects. Depends on `xknx-models`.
+
+## Installation
+
+```bash
+pip install xknx-product
+```
+
+## Archive structure
+
+A `.knxprod` file is a ZIP archive with the following layout:
+
+```
+knx_master.xml
+M-XXXX/
+  Catalog.xml
+  Hardware.xml
+  M-XXXX_A-<id>.xml   (one per application program)
+  M-XXXX.signature    (optional)
+```
+
+`ProductArchive` validates this structure on open and raises `ArchiveError` for anything malformed or missing.
+
+## Usage
+
+```python
+from xknxmono.product import ProductArchive, parse_archive
+
+# Open from a file path or bytes
+with ProductArchive("device.knxprod") as archive:
+    mfr_id = next(iter(archive.manufacturer_ids))
+    catalog_xml = archive.get_catalog_xml(mfr_id)
+    hardware_xml = archive.get_hardware_xml(mfr_id)
+    app_xmls = archive.get_application_xmls(mfr_id)
+
+# Parse the full archive into typed application objects
+applications = parse_archive("device.knxprod")
+for app in applications:
+    print(app.name, [p.name for p in app.parameters])
+```
+
+## Application model
+
+`parse_archive()` returns a list of `DeviceApplication` objects. Each one exposes:
+
+- **`parameters`** — list of `Parameter` with name, type (`ParamType`), and value constraints
+- **`com_objects`** — list of `ComObject` with DPT codes and flags (`ComObjectFlags`)
+- **`load_procedures`** — `LoadProcedures` describing the LTE load control steps
+- **`dynamic`** — `DynamicElement` tree for conditional UI visibility
+
+## API reference
+
+| Symbol                             | Description                                                      |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `ProductArchive(source)`           | Open a `.knxprod` archive from a path or bytes                   |
+| `parse_archive(source)`            | Parse all application programs from an archive                   |
+| `parse_application_xml(xml_bytes)` | Parse a single application XML into a `DeviceApplication`        |
+| `DeviceApplication`                | Typed container for parameters, com-objects, and load procedures |
+| `ArchiveError`                     | Raised for invalid or incomplete archives                        |

@@ -1,0 +1,77 @@
+name: Desktop build
+
+# Package the XKNX Editor into a standalone desktop app on each OS (see apps/editor-gui/DEPLOY.md).
+# - workflow_dispatch / tag push: build and keep the archives as workflow artifacts.
+# - release published (created by release-please for the editor-gui component): build and attach
+#   the per-OS archives to that GitHub Release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+
+permissions:
+  contents: write # needed to upload assets to the release
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Library releases (xknx-models, ...) also fire 'release'; only build for the app's release.
+    if: >-
+      github.event_name != 'release' ||
+      startsWith(github.event.release.tag_name, 'editor-gui-v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: XKNX-Editor-macos.zip
+          - os: windows-latest
+            asset: XKNX-Editor-windows.zip
+          - os: ubuntu-latest
+            asset: XKNX-Editor-linux.tar.gz
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages
+      - name: Regenerate app icon
+        working-directory: apps/editor-gui
+        run: uv run --package editor-gui python tools/make_icon.py
+      - name: Package with PyInstaller
+        working-directory: apps/editor-gui
+        run: >-
+          uv run --package editor-gui --with pyinstaller
+          pyinstaller --noconfirm --clean xknx-editor.spec
+
+      # Bundle the build output into a single archive (the macOS .app, or the onedir folder).
+      - name: Archive (macOS)
+        if: runner.os == 'macOS'
+        working-directory: apps/editor-gui/dist
+        run: ditto -c -k --keepParent "XKNX Editor.app" "../${{ matrix.asset }}"
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/editor-gui/dist
+        run: Compress-Archive -Path "XKNX Editor" -DestinationPath "..\${{ matrix.asset }}"
+      - name: Archive (Linux)
+        if: runner.os == 'Linux'
+        working-directory: apps/editor-gui/dist
+        run: tar czf "../${{ matrix.asset }}" "XKNX Editor"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: apps/editor-gui/${{ matrix.asset }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        shell: bash
+        working-directory: apps/editor-gui
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ matrix.asset }}" --clobber

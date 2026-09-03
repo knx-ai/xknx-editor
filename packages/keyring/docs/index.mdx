@@ -1,0 +1,40 @@
+---
+title: Quick Start
+description: Parse and serialize KNX keyring files.
+icon: Zap
+---
+
+`xknx-keyring` reads and writes KNX keyring files (`.knxkeys`) — the XML format ETS uses to export backbone keys, device authentication codes, and tool keys for a secured KNX installation. Depends on `xknx-models`.
+
+## Installation
+
+```bash
+pip install xknx-keyring
+```
+
+## Usage
+
+```python
+from xknxmono.keyring import load_keyring, serialize_keyring
+
+# Load from a file path
+keyring = load_keyring("project.knxkeys")
+
+# Load from bytes
+keyring = load_keyring(raw_bytes)
+
+# Inspect contents
+for backbone in keyring.backbone or []:
+    print(backbone.key)
+
+# Round-trip back to XML bytes
+xml_out = serialize_keyring(keyring)
+```
+
+## API reference
+
+| Symbol                       | Description                                                                      |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `load_keyring(source)`       | Parse keyring XML from a file path or bytes into a `Keyring` object              |
+| `serialize_keyring(keyring)` | Serialize a `Keyring` object back to XML bytes                                   |
+| `Keyring`                    | xsdata-generated root element matching the `http://knx.org/xml/keyring/1` schema |

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Config xmlns="http://pypi.org/project/xsdata" version="26.2">
+  <Output maxLineLength="99" genericCollections="false">
+    <Package>xknxmono.models.intermediate</Package>
+    <Format repr="true" eq="true" order="false" unsafeHash="false" frozen="false" slots="true" kw_only="true">dataclasses</Format>
+    <Structure>namespace-clusters</Structure>
+    <DocstringStyle>reStructuredText</DocstringStyle>
+    <RelativeImports>false</RelativeImports>
+    <CompoundFields defaultName="choice" useSubstitutionGroups="false" forceDefaultName="true">true</CompoundFields>
+    <WrapperFields>false</WrapperFields>
+    <UnnestClasses>true</UnnestClasses>
+    <IgnorePatterns>false</IgnorePatterns>
+    <IncludeHeader>false</IncludeHeader>
+  </Output>
+  <Conventions>
+    <ClassName case="pascalCase" safePrefix="type"/>
+    <FieldName case="snakeCase" safePrefix="value"/>
+    <ConstantName case="screamingSnakeCase" safePrefix="value"/>
+    <ModuleName case="snakeCase" safePrefix="mod"/>
+    <PackageName case="snakeCase" safePrefix="pkg"/>
+  </Conventions>
+  <Substitutions>
+    <Substitution type="package" search="http://www.w3.org/2001/XMLSchema" replace="xs"/>
+    <Substitution type="package" search="http://www.w3.org/XML/1998/namespace" replace="xml"/>
+    <Substitution type="package" search="http://www.w3.org/2001/XMLSchema-instance" replace="xsi"/>
+    <Substitution type="class" search="(.*)Class$" replace="\1Type"/>
+    <Substitution type="class" search="^LoadProcedureT(LdCtrl.+?)(?:T)?$" replace="\1"/>
+    <Substitution type="class" search="T(?=[A-Z])|T$" replace=""/>
+    <Substitution type="class" search="ApplicationProgramStaticOptionsTextParameterEncoding" replace="TextEncoding"/>
+  </Substitutions>
+  <Extensions/>
+</Config>

@@ -1,0 +1,5 @@
+# Track the bundled KNX schema XSDs; ignore anything else dropped here.
+*
+!.gitignore
+!README.md
+!*.xsd

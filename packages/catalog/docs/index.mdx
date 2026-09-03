@@ -1,0 +1,120 @@
+---
+title: Catalog
+description: SQLite catalog for KNX hardware — query directly from Python or serve via REST.
+icon: Database
+---
+
+`xknx-catalog` ingests `.knxprod` archives into a local SQLite database and
+exposes the data in two ways:
+
+- **Library layer** — pure Python functions you can call from scripts, GUI apps, or tests without running any server
+- **HTTP layer** — a FastAPI REST API for network access and browser-based browsing
+
+It depends on `xknx-models` and `xknx-product`.
+
+## Installation
+
+```bash
+pip install xknx-catalog
+```
+
+## Library usage
+
+Use the catalog directly from Python:
+
+```python
+from pathlib import Path
+from sqlalchemy.orm import Session
+from xknxmono.catalog import (
+    get_engine,
+    upload_knxprod,
+    HardwareFilters,
+    list_manufacturers,
+    list_hardware,
+    get_application_detail,
+)
+
+# Ingest a product file
+upload_knxprod(Path("device.knxprod").read_bytes(), dest_dir=Path("data/knxprod"))
+
+# Query manufacturers
+with Session(get_engine()) as db:
+    manufacturers = list_manufacturers(db)
+
+# Query hardware with filters
+with Session(get_engine()) as db:
+    results = list_hardware(
+        db,
+        HardwareFilters(
+            manufacturer_id=["M-0001"],
+            medium_type=["TP"],
+            limit=20,
+        ),
+    )
+    for hw in results:
+        print(hw.name, hw.order_number)
+
+# Get full application detail
+with Session(get_engine()) as db:
+    app = get_application_detail(db, program_id="M-0001_H-001-00_HP-001")
+    if app:
+        for co in app.com_objects:
+            print(co.name, co.dpt_codes)
+```
+
+By default, the engine connects to a bundled `catalog.db`. Override with the
+`DATABASE_URL` environment variable:
+
+```bash
+DATABASE_URL=sqlite:////data/my-catalog.db python my_script.py
+```
+
+## HTTP server
+
+Start the REST API server on `http://localhost:8000`:
+
+```bash
+xknxcatalog
+# or
+uvicorn xknxmono.catalog.http.app:app --reload
+```
+
+Interactive API docs are available at `/docs`.
+
+## Ingesting product files
+
+### Via the REST API
+
+```bash
+curl -X POST http://localhost:8000/upload \
+  -F "file=@device.knxprod"
+```
+
+### Via the CLI script
+
+Bulk-ingest all `.knxprod` files in a directory:
+
+```bash
+ingest-catalog /path/to/knxprod/directory
+```
+
+### Programmatically
+
+```python
+from pathlib import Path
+from xknxmono.catalog import upload_knxprod
+
+upload_knxprod(Path("device.knxprod").read_bytes(), dest_dir=Path("data/knxprod"))
+```
+
+Duplicate uploads are detected by SHA3-256 content hash and silently skipped.
+
+## Database
+
+The catalog uses a SQLite database (`catalog.db`) located next to the package
+data directory by default. Override the path with the `DATABASE_URL` environment
+variable:
+
+```bash
+DATABASE_URL=sqlite:////data/my-catalog.db xknxcatalog
+```

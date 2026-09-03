@@ -1,0 +1,81 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor widgets 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "(image)"
+msgstr "(Bild)"
+
+msgid "Search…"
+msgstr "Suche…"
+
+msgid "{name} (locked)"
+msgstr "{name} (gesperrt)"
+
+msgid "Create group addresses ({count})"
+msgstr "Gruppenadressen erstellen ({count})"
+
+msgid "All"
+msgstr "Alle"
+
+msgid "None"
+msgstr "Keine"
+
+msgid "Create group addresses"
+msgstr "Gruppenadressen erstellen"
+
+msgid "Name template placeholders: {object}, {device}, {n}"
+msgstr "Platzhalter für Namensvorlage: {object}, {device}, {n}"
+
+msgid "Name template"
+msgstr "Namensvorlage"
+
+msgid "Start address"
+msgstr "Startadresse"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "Sending group address"
+msgstr "Sendende Gruppenadresse"
+
+msgid "Receiving group address"
+msgstr "Empfangende Gruppenadresse"
+
+msgid "Changed from default ({default})"
+msgstr "Geändert gegenüber Standardwert ({default})"
+
+msgid "Changed from default ({default}) — right-click to reset"
+msgstr ""
+"Geändert gegenüber Standardwert ({default}) — Rechtsklick zum Zurücksetzen"
+
+msgid "Reset to default"
+msgstr "Auf Standardwert zurücksetzen"
+
+msgid "New group address"
+msgstr "Neue Gruppenadresse"
+
+msgid "Address"
+msgstr "Adresse"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Create & link"
+msgstr "Erstellen & verknüpfen"
+
+msgid "Link group address"
+msgstr "Gruppenadresse verknüpfen"
+
+msgid "<differs>"
+msgstr "<unterschiedlich>"
+
+msgid "Off"
+msgstr "Aus"
+
+msgid "On"
+msgstr "Ein"

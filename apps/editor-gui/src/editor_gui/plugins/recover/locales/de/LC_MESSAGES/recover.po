@@ -1,0 +1,134 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor recover 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Recover"
+msgstr "Wiederherstellen"
+
+msgid "Recover from bus..."
+msgstr "Vom Bus wiederherstellen..."
+
+msgid "Recover project from bus"
+msgstr "Projekt vom Bus wiederherstellen"
+
+msgid "From address"
+msgstr "Von Adresse"
+
+msgid "To address"
+msgstr "Bis Adresse"
+
+msgid "Scan"
+msgstr "Suchen"
+
+msgid "Stop"
+msgstr "Stoppen"
+
+msgid "Add to open project as read"
+msgstr "Zum geöffneten Projekt hinzufügen (gelesen)"
+
+msgid "Recover selected"
+msgstr "Ausgewählte wiederherstellen"
+
+msgid "Create new project"
+msgstr "Neues Projekt erstellen"
+
+msgid "Add to open project"
+msgstr "Zum geöffneten Projekt hinzufügen"
+
+msgid "Verify (read-only)"
+msgstr "Verifizieren (nur lesen)"
+
+msgid "Export snapshot"
+msgstr "Schnappschuss exportieren"
+
+msgid "Verifying (re-reading and comparing)..."
+msgstr "Verifizierung (erneutes Lesen und Vergleichen)..."
+
+msgid "%(count)d group address(es) have no sender or multiple senders."
+msgstr "%(count)d Gruppenadresse(n) haben keinen oder mehrere Sender."
+
+msgid "Address"
+msgstr "Adresse"
+
+msgid "Mask"
+msgstr "Maske"
+
+msgid "Product / application"
+msgstr "Produkt / Applikation"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "Set an address range and scan the bus."
+msgstr "Adressbereich festlegen und den Bus durchsuchen."
+
+msgid "Scanning the bus..."
+msgstr "Bus wird durchsucht..."
+
+msgid "Scanning %(address)s  (%(done)d/%(total)d, %(found)d found)"
+msgstr "Suche %(address)s  (%(done)d/%(total)d, %(found)d gefunden)"
+
+msgid "Loading missing products from online catalog: %(what)s"
+msgstr "Fehlende Produkte werden aus dem Online-Katalog geladen: %(what)s"
+
+msgid "Reading devices..."
+msgstr "Geräte werden gelesen..."
+
+msgid "Reading %(address)s  (%(done)d/%(total)d)  -  %(stage)s"
+msgstr "Lese %(address)s  (%(done)d/%(total)d)  -  %(stage)s"
+
+msgid "group communication tables"
+msgstr "Gruppenkommunikationstabellen"
+
+msgid "parameter memory"
+msgstr "Parameterspeicher"
+
+msgid ""
+"Recovered %(devices)d device(s): %(group_addresses)d group addresses, "
+"%(links)d links, %(unknown)d parameter(s) not recoverable."
+msgstr ""
+"%(devices)d Gerät(e) wiederhergestellt: %(group_addresses)d Gruppenadressen,"
+" %(links)d Verknüpfungen, %(unknown)d Parameter nicht wiederherstellbar."
+
+msgid "Recovered"
+msgstr "Wiederhergestellt"
+
+msgid "Added %(count)d device(s) to the open project (%(target)s)."
+msgstr "%(count)d Gerät(e) zum geöffneten Projekt hinzugefügt (%(target)s)."
+
+msgid "Created new project %(target)s with %(count)d device(s)."
+msgstr "Neues Projekt %(target)s mit %(count)d Gerät(e) erstellt."
+
+msgid "Not connected to a KNX bus."
+msgstr "Nicht mit einem KNX-Bus verbunden."
+
+msgid "Open or create a project to add recovered devices."
+msgstr ""
+"Öffnen oder erstellen Sie ein Projekt, um wiederhergestellte Geräte "
+"hinzuzufügen."
+
+msgid "matched"
+msgstr "übereinstimmend"
+
+msgid "confirm product/version, then tick"
+msgstr "Produkt/Version bestätigen, dann ankreuzen"
+
+msgid "not in catalog - import via Catalog"
+msgstr "Nicht im Katalog — über Katalog importieren"
+
+msgid "unprogrammed"
+msgstr "nicht programmiert"
+
+msgid "recovered"
+msgstr "wiederhergestellt"
+
+msgid "error"
+msgstr "Fehler"
+
+msgid "%d parameters could not be recovered"
+msgstr "%d Parameter konnten nicht wiederhergestellt werden"

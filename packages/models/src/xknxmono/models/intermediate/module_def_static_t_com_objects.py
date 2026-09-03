@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxmono.models.intermediate.module_def_static_t_com_objects_com_object import (
+    ModuleDefStaticComObjectsComObject,
+)
+
+
+@dataclass(slots=True, kw_only=True)
+class ModuleDefStaticComObjects:
+    """
+    :ivar com_object: registration-relevant set
+    """
+
+    class Meta:
+        global_type = False
+
+    com_object: list[ModuleDefStaticComObjectsComObject] = field(
+        default_factory=list,
+        metadata={
+            "name": "ComObject",
+            "type": "Element",
+        },
+    )
