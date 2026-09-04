@@ -4,5 +4,5 @@
   "packages/models": "0.0.0",
   "packages/product": "0.0.0",
   "packages/project": "0.0.0",
-  "apps/editor-gui": "0.0.0"
+  "apps/editor-gui": "0.1.0"
 }
