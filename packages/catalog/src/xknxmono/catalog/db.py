@@ -16,6 +16,7 @@ load_dotenv()
 
 from sqlalchemy import create_engine, event  # noqa: E402
 from sqlalchemy.engine import Engine  # noqa: E402
+from sqlalchemy.exc import OperationalError  # noqa: E402
 
 from xknxmono.catalog.models import Base  # noqa: E402
 
@@ -46,5 +47,14 @@ def make_engine(url: str) -> Engine:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-    Base.metadata.create_all(engine)
+    # create_all(checkfirst=True) normally skips existing tables, but on a database left in an
+    # inconsistent state by a previous hard crash (the table exists yet the has_table probe misses
+    # it — observed on Windows via x64 emulation) it still emits CREATE TABLE and fails with
+    # "table ... already exists". The schema is genuinely present, so treat that as a no-op: the
+    # catalog is a rebuildable cache and reusing the existing tables is correct and idempotent.
+    try:
+        Base.metadata.create_all(engine)
+    except OperationalError as exc:
+        if "already exists" not in str(exc.orig):
+            raise
     return engine

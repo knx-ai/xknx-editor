@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
+import tempfile
 import time
 from collections import deque
 from collections.abc import MutableMapping
@@ -85,6 +88,21 @@ class LogService:
         )
         return event_dict
 
+    def _log_stream(self) -> Any:
+        """A stream structlog's PrintLogger can write to.
+
+        In a frozen windowed app (PyInstaller ``console=False``) there is no console, so
+        ``sys.stdout``/``sys.stderr`` are ``None`` — structlog then can't create its per-file lock
+        (``cannot create weak reference to 'NoneType'``). Fall back to a log file on disk, which is
+        also handy for diagnosing the frozen build. The in-app Logger panel gets its records from
+        ``_capture`` regardless of this stream.
+        """
+        stream = sys.stdout if sys.stdout is not None else sys.stderr
+        if stream is not None:
+            return stream
+        path = os.path.join(tempfile.gettempdir(), "xknx-editor.log")
+        return open(path, "a", encoding="utf-8", buffering=1)  # line-buffered
+
     def _configure_structlog(self) -> None:
         structlog.configure(
             processors=[
@@ -96,7 +114,7 @@ class LogService:
             ],
             wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
             context_class=dict,
-            logger_factory=structlog.PrintLoggerFactory(),
+            logger_factory=structlog.PrintLoggerFactory(file=self._log_stream()),
             cache_logger_on_first_use=False,
         )
 
