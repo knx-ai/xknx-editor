@@ -189,6 +189,34 @@ async def test_project_tools_require_open_project(tmp_path: Path) -> None:
             await client.call_tool("project_add_device", {"product_ref_id": "x"})
 
 
+@pytest.mark.skipif(not _FIXTURE.exists(), reason="knxprod fixture missing")
+async def test_import_knxprod_bytes(tmp_path: Path) -> None:
+    """A .knxprod imports inline as base64 (remote client), then is readable via catalog tools."""
+    import base64 as _b64
+
+    mcp, _project = _build(tmp_path)
+    async with Client(mcp) as client:
+        payload = _b64.b64encode(_FIXTURE.read_bytes()).decode()
+        added = await _data(
+            client,
+            "catalog_import_knxprod_bytes",
+            filename="dev.knxprod",
+            data_base64=payload,
+        )
+        assert added["added_refs"]
+        assert (await _data(client, "catalog_list_products"))["count"] >= 1
+
+        # a non-ZIP payload is rejected before any import is attempted
+        with pytest.raises(Exception, match=r"not a \.knxprod archive"):
+            await client.call_tool(
+                "catalog_import_knxprod_bytes",
+                {
+                    "filename": "x.knxprod",
+                    "data_base64": _b64.b64encode(b"not a zip").decode(),
+                },
+            )
+
+
 async def test_catalog_docs_builds_manufacturer_links(tmp_path: Path) -> None:
     """catalog_docs returns a site-scoped manufacturer search plus a web search (no network/project)."""
     mcp, _project = _build(tmp_path)

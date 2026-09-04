@@ -9,10 +9,13 @@ freeze the UI frame.
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import hashlib
 import io
 import json
 import re
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote_plus, urlparse
@@ -29,6 +32,9 @@ _SLOW = 300.0
 _MAX_DOC_BYTES = (
     40 * 1024 * 1024
 )  # refuse to pull absurdly large files into the process
+# Cap for an inline (base64) .knxprod upload. A single-device knxprod is usually < 1 MB; only large
+# manufacturer bundles approach this. Keeps a remote client from streaming an unbounded blob into RAM.
+_MAX_KNXPROD_BYTES = 25 * 1024 * 1024
 # Documentation file extensions we read as plain text/markdown (besides PDF), e.g. OpenKNX
 # Applikationsbeschreibungen hosted as .md in the GitHub module repos.
 _TEXT_EXTS = (".md", ".markdown", ".txt")
@@ -530,11 +536,54 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
 
     @tool
     def catalog_import_knxprod(path: str) -> dict[str, Any]:
-        """Import a local .knxprod file into the catalog. Returns the newly added product refs."""
+        """Import a local .knxprod file into the catalog. Returns the newly added product refs.
+
+        The path is on the EDITOR's machine. If your MCP client runs on a different machine, use
+        catalog_import_knxprod_bytes instead, or catalog_download_online_products for online-catalog
+        devices."""
         added = ctx.run_locked(
             lambda: catalog.import_knxprod(Path(path)), timeout=_SLOW
         )
         return {"added_refs": added}
+
+    @tool
+    def catalog_import_knxprod_bytes(
+        filename: str, data_base64: str
+    ) -> dict[str, Any]:
+        """Import a .knxprod supplied INLINE as base64, for when the client is not on the editor host.
+
+        Use this when a local file path is not reachable by the editor (remote MCP client): attach the
+        .knxprod and pass its bytes as base64. The archive is decoded, validated and imported; then
+        read its content with catalog_list_products / catalog_get_application / project_list_com_objects
+        / project_list_parameters (the tool returns product refs, not raw bytes). Prefer
+        catalog_import_knxprod(path) when the file is already on the editor host. Capped at 25 MB."""
+        try:
+            raw = base64.b64decode(data_base64, validate=True)
+        except ValueError as exc:
+            raise ToolError(f"data_base64 is not valid base64: {exc}") from exc
+        if not raw:
+            raise ToolError("data_base64 is empty")
+        if len(raw) > _MAX_KNXPROD_BYTES:
+            raise ToolError(
+                f"knxprod is larger than {_MAX_KNXPROD_BYTES // (1024 * 1024)} MB"
+            )
+        if raw[:2] != b"PK":  # .knxprod is a ZIP archive
+            raise ToolError("data is not a .knxprod archive (ZIP signature missing)")
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename.rsplit("/", 1)[-1]) or "upload"
+        if not safe.lower().endswith(".knxprod"):
+            safe += ".knxprod"
+        tmp_dir = Path(tempfile.mkdtemp(prefix="xknx-mcp-"))
+        tmp = tmp_dir / safe
+        try:
+            tmp.write_bytes(raw)
+            added = ctx.run_locked(
+                lambda: catalog.import_knxprod(tmp), timeout=_SLOW
+            )
+        finally:
+            tmp.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                tmp_dir.rmdir()
+        return {"added_refs": added, "filename": safe, "size_bytes": len(raw)}
 
     # --- online catalog ---------------------------------------------------
 
