@@ -594,6 +594,59 @@ class MenuStrings:
     def BTN_CANCEL(self) -> str:
         return _("Cancel")
 
+    # --- update check ---------------------------------------------------
+    @property
+    def MENU_CHECK_UPDATES(self) -> str:
+        return _("Check for updates")
+
+    @property
+    def MENU_UPDATE_ON_STARTUP(self) -> str:
+        return _("Check for updates on startup")
+
+    @property
+    def UPDATE_TITLE(self) -> str:
+        return _("Update available")
+
+    @property
+    def UPDATE_AVAILABLE(self) -> str:
+        return _("Version {latest} is available. You have {current}.")
+
+    @property
+    def UPDATE_UP_TO_DATE(self) -> str:
+        return _("You are up to date (version {version}).")
+
+    @property
+    def UPDATE_DOWNLOAD(self) -> str:
+        return _("Download")
+
+    @property
+    def UPDATE_SKIP(self) -> str:
+        return _("Skip this version")
+
+    @property
+    def UPDATE_LATER(self) -> str:
+        return _("Later")
+
+    @property
+    def UPDATE_NOTES_HEADER(self) -> str:
+        return _("Release notes:")
+
+    @property
+    def ABOUT_LICENSE(self) -> str:
+        return _("License: MIT")
+
+    @property
+    def ABOUT_WEBSITE(self) -> str:
+        return _("Website:")
+
+    @property
+    def MENU_OPEN_CONFIG_DIR(self) -> str:
+        return _("Open config folder")
+
+    @property
+    def MENU_OPEN_CACHE_DIR(self) -> str:
+        return _("Open cache folder")
+
 
 class _CombinedStrings(BaseStrings, MenuStrings):
     pass

@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -8,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import imgui_bundle._patch_runners_add_save_screenshot_param as _screenshot_patch
+import platformdirs
 
 _screenshot_patch._get_caller_filename = lambda depth: ""  # type: ignore[assignment]
 
@@ -37,12 +40,21 @@ from editor_gui.plugins.timeline import TimelinePlugin
 from editor_gui.plugins.topology import TopologyPlugin
 from editor_gui.settings import config_dir, load_settings, save_settings
 from editor_gui.strings import S, get_locale, set_locale
+from editor_gui.update_check import UpdateInfo, check_for_update
 from xknxmono.product.errors import ArchiveError
 from xknxmono.project import (
     MyKnxError,
     export_knxproj,
     fetch_myknx_products,
     myknx_certificate_signer,
+)
+
+_REPO_URL = "https://github.com/knx-ai/xknx-editor"
+# Direct download of the CPU/software-OpenGL (Mesa llvmpipe) Windows build — the one that runs in
+# VMs (UTM/QEMU) and on hosts without an OpenGL driver. /releases/latest/download always points at
+# the newest release's asset.
+_SOFTWARE_GL_URL = (
+    f"{_REPO_URL}/releases/latest/download/XKNX-Editor-windows-softwaregl.zip"
 )
 
 
@@ -183,6 +195,11 @@ class KnxGuiApp:
         self._export_success_msg: str | None = None
         self._welcome_dismissed = False  # user closed the welcome card this session
         self._about_requested = False
+        # GitHub update check (best-effort, off the UI thread; see update_check.py).
+        self._update_info: UpdateInfo | None = None
+        self._update_prompt_requested = False
+        self._update_thread: threading.Thread | None = None
+        self._update_manual = False  # a user-triggered check also reports "up to date"
         # Target ETS schema for .knxproj export. Default project/20 (ETS5 shape) imports into ETS5
         # AND ETS6 (ETS6 converts up). A native project/23 export is only possible when every used
         # device's product data is ETS6-era (project/23); see _do_export_knxproj.
@@ -270,6 +287,53 @@ class KnxGuiApp:
         self._log.info("editor started")
         # Discover KNX gateways at startup and auto-connect to the last-used (or first) one.
         self._connection_plugin.autostart()
+        # Best-effort check for a newer release on GitHub (unless the user disabled it).
+        if self._update_check_enabled():
+            self._start_update_check(manual=False)
+
+    # --- update check (GitHub releases) -----------------------------------
+
+    def _update_check_enabled(self) -> bool:
+        return bool(load_settings("app").get("update_check_enabled", True))
+
+    def _set_update_check_enabled(self, enabled: bool) -> None:
+        data = load_settings("app")
+        data["update_check_enabled"] = enabled
+        save_settings("app", data)
+
+    def _skipped_update_version(self) -> str:
+        return str(load_settings("app").get("skipped_update_version", ""))
+
+    def _skip_update_version(self, version: str) -> None:
+        data = load_settings("app")
+        data["skipped_update_version"] = version
+        save_settings("app", data)
+
+    def _start_update_check(self, *, manual: bool) -> None:
+        if self._update_thread is not None and self._update_thread.is_alive():
+            return
+        self._update_manual = manual
+
+        def worker() -> None:
+            info = check_for_update(__version__)
+            # Marshal the result back onto the UI thread (touches settings + toasts + popups).
+            self._ui_executor.submit(lambda: self._on_update_result(info))
+
+        self._update_thread = threading.Thread(
+            target=worker, daemon=True, name="update-check"
+        )
+        self._update_thread.start()
+
+    def _on_update_result(self, info: UpdateInfo | None) -> None:
+        self._update_thread = None
+        # A user-triggered check ignores a previously skipped version and reassures when up to date.
+        if info is not None and (
+            self._update_manual or info.version != self._skipped_update_version()
+        ):
+            self._update_info = info
+            self._update_prompt_requested = True
+        elif self._update_manual:
+            self._flash_toast(S.UPDATE_UP_TO_DATE.format(version=__version__))
 
     def shutdown(self) -> None:
         # Stop the MCP server first so in-flight tool calls stop before the bus loop and project they
@@ -1189,6 +1253,18 @@ class KnxGuiApp:
         if imgui.begin_menu(S.MENU_HELP):
             if imgui.menu_item(S.MENU_ABOUT, "", False)[0]:
                 self._about_requested = True
+            if imgui.menu_item(S.MENU_CHECK_UPDATES, "", False)[0]:
+                self._start_update_check(manual=True)
+            changed, enabled = imgui.menu_item(
+                S.MENU_UPDATE_ON_STARTUP, "", self._update_check_enabled()
+            )
+            if changed:
+                self._set_update_check_enabled(enabled)
+            imgui.separator()
+            if imgui.menu_item(S.MENU_OPEN_CONFIG_DIR, "", False)[0]:
+                self._open_folder(config_dir())
+            if imgui.menu_item(S.MENU_OPEN_CACHE_DIR, "", False)[0]:
+                self._open_folder(Path(platformdirs.user_cache_dir("xknx-editor")))
             imgui.end_menu()
 
         if imgui.menu_item(S.MENU_FEEDBACK, "", False)[0]:
@@ -1206,6 +1282,19 @@ class KnxGuiApp:
         except Exception as e:
             self._log.error("could not open feedback page", url=url, error=str(e))
 
+    def _open_folder(self, path: Path) -> None:
+        """Reveal a directory in the OS file manager (created if missing)."""
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            elif sys.platform == "win32":
+                getattr(os, "startfile")(str(path))  # noqa: B009 - Windows-only API
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as e:
+            self._log.error("could not open folder", path=str(path), error=str(e))
+
     def _render_about_modal(self) -> None:
         if self._about_requested:
             imgui.open_popup(S.ABOUT_TITLE)
@@ -1218,7 +1307,56 @@ class KnxGuiApp:
         imgui.spacing()
         imgui.text_wrapped(S.ABOUT_TEXT)
         imgui.spacing()
+        imgui.text_disabled(S.ABOUT_LICENSE)
+        imgui.text(S.ABOUT_WEBSITE)
+        imgui.same_line()
+        imgui.text_link_open_url(_REPO_URL, _REPO_URL)
+        imgui.spacing()
+        imgui.separator()
+        imgui.spacing()
+        if imgui.button(S.MENU_CHECK_UPDATES, imgui.ImVec2(170, 0)):
+            self._start_update_check(manual=True)
+        imgui.same_line()
         if imgui.button(S.BTN_OK, imgui.ImVec2(120, 0)):
+            imgui.close_current_popup()
+        imgui.end_popup()
+
+    def _render_update_modal(self) -> None:
+        if self._update_prompt_requested:
+            imgui.open_popup(S.UPDATE_TITLE)
+            self._update_prompt_requested = False
+        imgui.set_next_window_size(imgui.ImVec2(460.0, 0.0), imgui.Cond_.always)
+        if not imgui.begin_popup_modal(S.UPDATE_TITLE, None)[0]:
+            return
+        info = self._update_info
+        if info is None:
+            imgui.end_popup()
+            return
+        imgui.text_wrapped(
+            S.UPDATE_AVAILABLE.format(latest=info.version, current=__version__)
+        )
+        if info.notes:
+            imgui.spacing()
+            imgui.separator()
+            imgui.text_disabled(S.UPDATE_NOTES_HEADER)
+            if imgui.begin_child("##update-notes", imgui.ImVec2(0.0, 220.0), True):
+                imgui.text_wrapped(info.notes)
+            imgui.end_child()
+        imgui.spacing()
+        if imgui.button(S.UPDATE_DOWNLOAD, imgui.ImVec2(140, 0)):
+            try:
+                webbrowser.open(info.url)
+            except Exception as e:
+                self._log.error(
+                    "could not open release page", url=info.url, error=str(e)
+                )
+            imgui.close_current_popup()
+        imgui.same_line()
+        if imgui.button(S.UPDATE_SKIP, imgui.ImVec2(140, 0)):
+            self._skip_update_version(info.version)
+            imgui.close_current_popup()
+        imgui.same_line()
+        if imgui.button(S.UPDATE_LATER, imgui.ImVec2(100, 0)):
             imgui.close_current_popup()
         imgui.end_popup()
 
@@ -1240,6 +1378,7 @@ class KnxGuiApp:
         self._render_url_prompt_modal()
         self._render_myknx_sign_modal()
         self._render_about_modal()
+        self._render_update_modal()
         self._keyring_plugin.render_window()
         self._render_welcome()
         # Programming queue: advance it every frame (robust wakeup even if the bus was freed by a
@@ -1983,7 +2122,61 @@ def _main() -> None:
     runner_params.callbacks.before_exit = app.shutdown
     runner_params.callbacks.post_render_dockable_windows = app.render_overlays
 
-    hello_imgui.run(runner_params)
+    try:
+        hello_imgui.run(runner_params)
+    except (RuntimeError, SystemError) as exc:
+        # hello_imgui/GLFW raise this when no OpenGL context can be created (e.g. Windows-on-ARM
+        # under x64 emulation, some VMs, or a machine without an OpenGL driver): the C++ side aborts
+        # with "Failed to create temporary window". Turn that into a readable message instead of a
+        # raw assert traceback.
+        if not _is_graphics_init_error(exc):
+            raise
+        _show_graphics_error(str(exc))
+        raise SystemExit(1) from exc
+
+
+_GRAPHICS_ERROR_MARKERS = (
+    "failed to create",
+    "opengl",
+    "glfw",
+    "wgl",
+    "temporary window",
+)
+
+
+def _is_graphics_init_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(m in msg for m in _GRAPHICS_ERROR_MARKERS)
+
+
+def _show_graphics_error(detail: str) -> None:
+    """Show a readable 'graphics/OpenGL could not start' message (a Windows message box when there is
+    no console; stderr + the log otherwise)."""
+    title = "XKNX-Editor — graphics error"
+    body = (
+        "XKNX-Editor could not start because the system could not create an OpenGL window.\n\n"
+        "This means there is no working OpenGL driver — common in virtual machines "
+        "(UTM/QEMU/Parallels), on Windows on ARM, and over remote sessions.\n\n"
+        "What helps:\n"
+        "- In a VM (UTM/QEMU): the Microsoft OpenGL Compatibility Pack does NOT help, because the "
+        "VM exposes no GPU to Windows. Download and use the separate CPU/software-OpenGL build of "
+        "XKNX-Editor, which renders without a GPU:\n"
+        f"    {_SOFTWARE_GL_URL}\n"
+        "- On a physical Windows on ARM PC: install the 'OpenCL and OpenGL Compatibility Pack' "
+        "from the Microsoft Store, then restart.\n"
+        "- Otherwise update your graphics driver, or run on a machine with a GPU.\n\n"
+        f"Technical detail: {detail}"
+    )
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        print(f"{title}\n{body}", file=sys.stderr)
+    if sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            import ctypes
+
+            # MB_OK | MB_ICONERROR, works without a console window.
+            ctypes.windll.user32.MessageBoxW(None, body, title, 0x10)  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":
