@@ -2,7 +2,7 @@ name: Desktop build
 
 # Package the XKNX Editor into a standalone desktop app on each OS (see apps/editor-gui/DEPLOY.md).
 # - workflow_dispatch / tag push: build and keep the archives as workflow artifacts.
-# - release published (created by release-please for the editor-gui component): build and attach
+# - release published (created by release-please for the xknx-editor component): build and attach
 #   the per-OS archives to that GitHub Release.
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ jobs:
     # Library releases (xknx-models, ...) also fire 'release'; only build for the app's release.
     if: >-
       github.event_name != 'release' ||
-      startsWith(github.event.release.tag_name, 'editor-gui-v')
+      startsWith(github.event.release.tag_name, 'xknx-editor-v')
     strategy:
       fail-fast: false
       matrix:
@@ -34,33 +34,118 @@ jobs:
             asset: XKNX-Editor-linux.tar.gz
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # Build against a python.org CPython, NOT uv's managed python-build-standalone: the latter's
+      # python3xx.dll does not load under a PyInstaller bundle on Windows ("Failed to load Python
+      # DLL … FormatMessageW failed"). UV_PYTHON pins every uv command to this interpreter.
+      - uses: actions/setup-python@v5
+        id: setup-python
+        with:
+          python-version: "3.13"
+      - run: echo "UV_PYTHON=${{ steps.setup-python.outputs.python-path }}" >> "$GITHUB_ENV"
+        shell: bash
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
       - run: uv sync --all-packages
       - name: Regenerate app icon
         working-directory: apps/editor-gui
-        run: uv run --package editor-gui python tools/make_icon.py
+        run: uv run --package xknx-editor python tools/make_icon.py
+
       - name: Package with PyInstaller
         working-directory: apps/editor-gui
         run: >-
-          uv run --package editor-gui --with pyinstaller
+          uv run --package xknx-editor --with pyinstaller
           pyinstaller --noconfirm --clean xknx-editor.spec
+
+      # actions/setup-python bundles its OWN OpenSSL (from actions/python-versions), whose
+      # libcrypto-3.dll deterministically fails to load on some Windows machines (the OS loader
+      # access-violates in ntdll, surfacing as GetLastError 998/193) even though it is a valid x64 PE.
+      # python.org's OFFICIAL CPython ships the same OpenSSL version but a build that loads fine.
+      # Overlay python.org's official libcrypto/libssl (from the matching embeddable) INTO the packaged
+      # bundle after PyInstaller. Overwriting the interpreter's DLLs dir beforehand proved unreliable
+      # (PyInstaller still collected setup-python's copy). Same OpenSSL 3.x version, ABI-compatible with
+      # _ssl.pyd.
+      - name: Overlay python.org's official OpenSSL into the bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/editor-gui
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pyver = (uv run --package xknx-editor python -c "import platform;print(platform.python_version())").Trim()
+          $embed = "python-$pyver-embed-amd64.zip"
+          Write-Host "Fetching official python.org OpenSSL from $embed"
+          curl.exe -fL -o $embed "https://www.python.org/ftp/python/$pyver/$embed"
+          New-Item -ItemType Directory -Force -Path embed_openssl | Out-Null
+          Expand-Archive -Force $embed -DestinationPath embed_openssl
+          $internal = "dist\XKNX-Editor\_internal"
+          foreach ($n in "libcrypto-3.dll","libssl-3.dll") {
+            $dst = Join-Path $internal $n
+            if (-not (Test-Path $dst)) { throw "expected $dst in the bundle" }
+            Copy-Item "embed_openssl\$n" $dst -Force
+            Write-Host "Overlaid $n from python.org $pyver into the bundle"
+          }
+
+      - name: Add Windows installer to the bundle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/editor-gui
+        run: Copy-Item "tools\install.bat" "dist\XKNX-Editor\install.bat" -Force
+
+      # Second Windows artifact: a CPU/software-OpenGL variant (Mesa llvmpipe) for machines with no
+      # working OpenGL driver — VMs (UTM/QEMU/Parallels), Windows on ARM, remote sessions. Mesa's
+      # opengl32.dll sits next to the exe (name-based override) and the marker makes the app force
+      # GALLIUM_DRIVER=llvmpipe (pure CPU rendering).
+      - name: Build software-OpenGL variant (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: apps/editor-gui
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rel = Invoke-RestMethod "https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest"
+          $asset = $rel.assets | Where-Object { $_.name -like "*-release-msvc.7z" } | Select-Object -First 1
+          if (-not $asset) { throw "no mesa-dist-win release-msvc.7z asset found" }
+          Write-Host "Mesa: $($asset.name)"
+          curl.exe -fL -o mesa.7z $asset.browser_download_url
+          7z x mesa.7z -omesa -y | Out-Null
+          Copy-Item -Recurse "dist\XKNX-Editor" "dist\XKNX-Editor-softwaregl"
+          # Mesa's opengl32.dll + its companions (libgallium_wgl.dll, etc.) next to the exe.
+          Copy-Item "mesa\x64\*.dll" "dist\XKNX-Editor-softwaregl\" -Force
+          if (-not (Test-Path "dist\XKNX-Editor-softwaregl\opengl32.dll")) { throw "Mesa opengl32.dll missing" }
+          New-Item -ItemType File -Path "dist\XKNX-Editor-softwaregl\software_gl.marker" -Force | Out-Null
+          Push-Location dist
+          Compress-Archive -Path "XKNX-Editor-softwaregl" -DestinationPath "..\XKNX-Editor-windows-softwaregl.zip" -Force
+          Pop-Location
+
+      - name: Upload software-OpenGL artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: XKNX-Editor-windows-softwaregl.zip
+          path: apps/editor-gui/XKNX-Editor-windows-softwaregl.zip
+          if-no-files-found: error
+
+      - name: Attach software-OpenGL build to release (Windows)
+        if: runner.os == 'Windows' && github.event_name == 'release'
+        shell: bash
+        working-directory: apps/editor-gui
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "XKNX-Editor-windows-softwaregl.zip" --clobber
 
       # Bundle the build output into a single archive (the macOS .app, or the onedir folder).
       - name: Archive (macOS)
         if: runner.os == 'macOS'
         working-directory: apps/editor-gui/dist
-        run: ditto -c -k --keepParent "XKNX Editor.app" "../${{ matrix.asset }}"
+        run: ditto -c -k --keepParent "XKNX-Editor.app" "../${{ matrix.asset }}"
       - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: apps/editor-gui/dist
-        run: Compress-Archive -Path "XKNX Editor" -DestinationPath "..\${{ matrix.asset }}"
+        run: Compress-Archive -Path "XKNX-Editor" -DestinationPath "..\${{ matrix.asset }}"
       - name: Archive (Linux)
         if: runner.os == 'Linux'
         working-directory: apps/editor-gui/dist
-        run: tar czf "../${{ matrix.asset }}" "XKNX Editor"
+        run: tar czf "../${{ matrix.asset }}" "XKNX-Editor"
 
       - uses: actions/upload-artifact@v4
         with:

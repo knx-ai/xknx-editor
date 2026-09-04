@@ -24,8 +24,13 @@ _datas = []
 _binaries = []
 _hiddenimports = []
 
-# Third-party packages that ship native libraries and/or data (fonts, schemas, templates).
-for _pkg in ("imgui_bundle", "fastmcp", "xknx", "xknxproject"):
+# Third-party packages that ship native libraries and/or data (fonts, schemas, templates) or do
+# dynamic imports PyInstaller's static analysis misses. `mcp` and `uvicorn` are collected in full
+# because fastmcp's server (uvicorn's protocol/loop backends, mcp's submodules) imports parts of
+# them by name at runtime. NOTE: the earlier "FastMCP server support is not installed" failure was a
+# symptom of the Windows OpenSSL load failure (fastmcp's server import chain imports ssl), not of
+# missing modules — it is fixed by shipping python.org's OpenSSL, not by over-collecting here.
+for _pkg in ("imgui_bundle", "fastmcp", "mcp", "uvicorn", "xknx", "xknxproject"):
     d, b, h = collect_all(_pkg)
     _datas += d
     _binaries += b
@@ -64,6 +69,20 @@ a = Analysis(
     excludes=["pytest", "tkinter"],
     cipher=block_cipher,
 )
+# Drop ONLY the bundled ucrtbase.dll. A/B-confirmed on the target: when the bundled ucrtbase.dll is
+# present the PyInstaller bootloader pre-loads it and then FAILS to load python313.dll ("Failed to
+# load Python DLL … FormatMessageW failed"); when it is absent python313.dll loads fine against the
+# system UCRT. Keep the api-ms-win-crt-*.dll forwarders — python313.dll/_ssl.pyd/libcrypto-3.dll
+# import them by name and they just forward to whatever ucrtbase.dll is loaded (the system one).
+# NOTE: this is unrelated to the separate libcrypto-3.dll problem — setup-python's OpenSSL fails to
+# load on some machines and is replaced with python.org's official build in the desktop-build workflow
+# (post-packaging overlay step), not here.
+import os as _os
+
+a.binaries = [
+    b for b in a.binaries if _os.path.basename(b[0]).lower() != "ucrtbase.dll"
+]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
@@ -71,22 +90,25 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="XKNX Editor",
-    strip=True,  # strip debug symbols from the bootloader/binaries (smaller, no functional change)
-    upx=True,  # compresses the Windows build (.dll/.pyd); PyInstaller ignores UPX on macOS/Linux
+    name="XKNX-Editor",
+    # strip is DISABLED: on Windows PyInstaller runs GNU `strip` (present via Git-for-Windows on the
+    # runner) over the collected DLLs, which corrupts python3xx.dll -> "Failed to load Python DLL …
+    # FormatMessageW failed". PyInstaller itself warns strip is unsafe on Windows.
+    strip=False,
+    upx=False,  # also disabled: UPX likewise corrupted the Windows python DLL / MSVC runtime.
     console=False,  # windowed app (no terminal)
     # Platform icon (macOS .icns / Windows .ico) — the XKNX logo. Regenerate the .icns with:
     #   sips -s format icns src/editor_gui/assets/app_settings/icon.png --out icon.icns
     icon=_icon,
 )
-# upx=True shrinks the Windows binaries; PyInstaller disables UPX on macOS/Linux automatically
-# (compressed arm64 Mach-O libs fail to load / break code signing), so it is a no-op there.
-coll = COLLECT(exe, a.binaries, a.datas, strip=True, upx=True, name="XKNX Editor")
+# UPX disabled (see EXE above): it corrupted the bundled python3xx.dll / MSVC runtime on Windows,
+# so the app failed to start. macOS/Linux ignored UPX anyway.
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="XKNX-Editor")
 
 # On macOS, wrap the result in a proper .app bundle (dock icon comes from the bundle icon).
 app = BUNDLE(
     coll,
-    name="XKNX Editor.app",
+    name="XKNX-Editor.app",
     icon="icon.icns",  # XKNX logo for the dock/Finder icon
     bundle_identifier="org.xknx.editor",
 )
