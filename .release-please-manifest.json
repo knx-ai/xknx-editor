@@ -1,5 +1,5 @@
 {
-  "packages/catalog": "0.0.0",
+  "packages/catalog": "0.1.0",
   "packages/keyring": "0.0.0",
   "packages/models": "0.0.0",
   "packages/product": "0.0.0",
