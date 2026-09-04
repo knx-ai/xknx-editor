@@ -10,9 +10,9 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "editor-gui",
     "xknx-catalog",
     "xknx-download",
+    "xknx-editor",
     "xknx-keyring",
     "xknx-models",
     "xknx-product",
@@ -458,58 +458,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/50/5e478b533c25da934f78cfda2e967209bdb1df3377d80e8124449b17883a/dukpy-0.6.0-cp314-cp314t-win32.whl", hash = "sha256:82647658b5dfd9fd3f21da943407a85cf725ef68556897ee53b7ae41295898f2", size = 2496287, upload-time = "2026-07-23T19:02:19.633Z" },
     { url = "https://files.pythonhosted.org/packages/ba/a8/cc0ce7c5cf0e12ca01cac9a5dcb1e7d564d254148bddf0870f1c9492efa7/dukpy-0.6.0-cp314-cp314t-win_amd64.whl", hash = "sha256:3c82b323633c4ab74e4f7458f16816a55512e424a8cde3d38076818f231d2b5e", size = 2615767, upload-time = "2026-07-23T19:02:22.172Z" },
 ]
-
-[[package]]
-name = "editor-gui"
-version = "0.1.0"
-source = { editable = "apps/editor-gui" }
-dependencies = [
-    { name = "alembic" },
-    { name = "fastmcp" },
-    { name = "imgui-bundle" },
-    { name = "platformdirs" },
-    { name = "pypdf" },
-    { name = "sqlalchemy" },
-    { name = "structlog" },
-    { name = "uvicorn" },
-    { name = "xknx" },
-    { name = "xknx-catalog" },
-    { name = "xknx-download" },
-    { name = "xknx-models" },
-    { name = "xknx-product" },
-    { name = "xknx-project" },
-    { name = "xknx-recover" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pyright" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.18.4" },
-    { name = "fastmcp", specifier = ">=3.4.7" },
-    { name = "imgui-bundle", specifier = ">=1.92.0" },
-    { name = "platformdirs", specifier = ">=4.0" },
-    { name = "pypdf", specifier = ">=4.0" },
-    { name = "pyright", marker = "extra == 'dev'" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "ruff", marker = "extra == 'dev'" },
-    { name = "sqlalchemy", specifier = ">=2.0.49" },
-    { name = "structlog", specifier = ">=24.0.0" },
-    { name = "uvicorn", specifier = ">=0.47" },
-    { name = "xknx", specifier = ">=3.18.0" },
-    { name = "xknx-catalog", editable = "packages/catalog" },
-    { name = "xknx-download", editable = "packages/download" },
-    { name = "xknx-models", editable = "packages/models" },
-    { name = "xknx-product", editable = "packages/product" },
-    { name = "xknx-project", editable = "packages/project" },
-    { name = "xknx-recover", editable = "packages/recover" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "elementpath"
@@ -2307,6 +2255,58 @@ requires-dist = [
 ]
 
 [[package]]
+name = "xknx-editor"
+version = "0.1.0"
+source = { editable = "apps/editor-gui" }
+dependencies = [
+    { name = "alembic" },
+    { name = "fastmcp" },
+    { name = "imgui-bundle" },
+    { name = "platformdirs" },
+    { name = "pypdf" },
+    { name = "sqlalchemy" },
+    { name = "structlog" },
+    { name = "uvicorn" },
+    { name = "xknx" },
+    { name = "xknx-catalog" },
+    { name = "xknx-download" },
+    { name = "xknx-models" },
+    { name = "xknx-product" },
+    { name = "xknx-project" },
+    { name = "xknx-recover" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pyright" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.18.4" },
+    { name = "fastmcp", specifier = ">=3.4.7" },
+    { name = "imgui-bundle", specifier = ">=1.92.0" },
+    { name = "platformdirs", specifier = ">=4.0" },
+    { name = "pypdf", specifier = ">=4.0" },
+    { name = "pyright", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "ruff", marker = "extra == 'dev'" },
+    { name = "sqlalchemy", specifier = ">=2.0.49" },
+    { name = "structlog", specifier = ">=24.0.0" },
+    { name = "uvicorn", specifier = ">=0.47" },
+    { name = "xknx", specifier = ">=3.18.0" },
+    { name = "xknx-catalog", editable = "packages/catalog" },
+    { name = "xknx-download", editable = "packages/download" },
+    { name = "xknx-models", editable = "packages/models" },
+    { name = "xknx-product", editable = "packages/product" },
+    { name = "xknx-project", editable = "packages/project" },
+    { name = "xknx-recover", editable = "packages/recover" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "xknx-keyring"
 version = "0.1.0"
 source = { editable = "packages/keyring" }
@@ -2414,9 +2414,9 @@ name = "xknxtoolkit"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "editor-gui" },
     { name = "xknx-catalog" },
     { name = "xknx-download" },
+    { name = "xknx-editor" },
     { name = "xknx-keyring" },
     { name = "xknx-models" },
     { name = "xknx-product" },
@@ -2437,9 +2437,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "editor-gui", editable = "apps/editor-gui" },
     { name = "xknx-catalog", editable = "packages/catalog" },
     { name = "xknx-download", editable = "packages/download" },
+    { name = "xknx-editor", editable = "apps/editor-gui" },
     { name = "xknx-keyring", editable = "packages/keyring" },
     { name = "xknx-models", editable = "packages/models" },
     { name = "xknx-product", editable = "packages/product" },

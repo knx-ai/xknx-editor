@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "bootstrap-sha": "1b84e21edd3e0dee871411f6fa0600e37f55488a",
+  "bootstrap-sha": "56972d84cce164cc7d9ab8a084eb192c2869ff75",
   "separate-pull-requests": true,
   "bump-minor-pre-major": true,
   "pull-request-title-pattern": "chore(${component}): release ${version}",
@@ -10,6 +10,6 @@
     "packages/models": { "release-type": "python", "component": "xknx-models" },
     "packages/product": { "release-type": "python", "component": "xknx-product" },
     "packages/project": { "release-type": "python", "component": "xknx-project" },
-    "apps/editor-gui": { "release-type": "python", "component": "editor-gui" }
+    "apps/editor-gui": { "release-type": "python", "component": "xknx-editor" }
   }
 }

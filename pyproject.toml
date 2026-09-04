@@ -13,7 +13,7 @@ dependencies = [
     "xknx-recover",
     # The GUI app is a workspace member too; depend on it so a plain `uv sync` installs the whole
     # thing (incl. imgui-bundle) — testpaths runs its tests, so `uv sync` must provide its deps.
-    "editor-gui",
+    "xknx-editor",
 ]
 
 [dependency-groups]
@@ -39,7 +39,7 @@ xknx-models = { workspace = true }
 xknx-product = { workspace = true }
 xknx-project = { workspace = true }
 xknx-keyring = { workspace = true }
-editor-gui = { workspace = true }
+xknx-editor = { workspace = true }
 xknx-catalog = { workspace = true }
 xknx-download = { workspace = true }
 xknx-recover = { workspace = true }

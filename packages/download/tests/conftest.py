@@ -86,9 +86,7 @@ class FakeDevice:
                 and payload.count > self.memory_read_zero_above
             ):
                 # Device quirk: too-large read -> empty reply (not a short one).
-                return self._telegram(
-                    MemoryResponse(address=payload.address, data=b"")
-                )
+                return self._telegram(MemoryResponse(address=payload.address, data=b""))
             data = bytes(
                 self.memory.get(payload.address + i, 0) for i in range(payload.count)
             )

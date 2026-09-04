@@ -10,9 +10,13 @@ workflows which can auto download pdf manuals from the manufacturers.
 Prebuilt apps for **Windows, Linux, and macOS** are attached to every release — grab the latest from
 the [Releases page](https://github.com/knx-ai/xknx-editor/releases/latest) and start it directly.
 
-On macOS the app is not signed by Apple yet, so the first launch is blocked. To allow it, open it
-once, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-(confirm on the next launch). Alternatively, remove the quarantine flag in a terminal:
+On macOS the app is not signed by Apple yet, so the first launch is blocked:
+
+<img src="docs/images/macwarning.png" alt="macOS Gatekeeper warning" width="200">
+
+To allow it, open it once, then go to **System Settings → Privacy & Security**, scroll down, and
+click **Open Anyway** (confirm on the next launch). Alternatively, remove the quarantine flag in a
+terminal:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/XKNX Editor.app"
@@ -79,11 +83,11 @@ Only running from source is supported for now (developer-focused software).
 
 ```bash
 uv sync
-uv run --package editor-gui python -m editor_gui.main
+uv run python -m editor_gui.main
 ```
 
-`editor-gui` is a workspace member the root project does not depend on, so a plain `uv sync` does not
-install it (or its `imgui-bundle` dependency); `--package editor-gui` runs and installs it.
+The app (distribution `xknx-editor`, import package `editor_gui`) is a workspace member the root
+project depends on, so a plain `uv sync` installs it and its `imgui-bundle` dependency.
 
 ## Packages
 
@@ -120,7 +124,7 @@ To test unreleased `xknx` changes, clone it as a sibling and add a `[tool.uv.sou
 
 ## Requirements
 
-- Python >= 3.12
+- Python >= 3.13
 - [uv](https://docs.astral.sh/uv/)
 
 ## Disclaimer

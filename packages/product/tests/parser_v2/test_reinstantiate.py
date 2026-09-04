@@ -156,11 +156,15 @@ def test_non_widget_gate_does_not_disqualify_object() -> None:
     # A Choose gated by a param that is NEVER rendered as a widget (not in widget_param_refs) must not
     # push its gate — else it would disqualify every object under it, since it can never be "active"
     # (the ABB dummy-selector case). A widget-eligible gate IS pushed and gates activeness normally.
-    struct = ChooseWhenNode("STRUCT", {"1": [_CoLeaf("co-a")]}, None, widget_param_refs=set())
+    struct = ChooseWhenNode(
+        "STRUCT", {"1": [_CoLeaf("co-a")]}, None, widget_param_refs=set()
+    )
     cap = EvalCapture(None)
     struct.eval(_Ctx({"STRUCT": "1"}, cap))  # type: ignore[arg-type]
     assert cap.chains["co-a"] == [frozenset()]  # gate not pushed -> empty chain
-    assert cap.active_ref_ids(frozenset()) == {"co-a"}  # active despite no active params
+    assert cap.active_ref_ids(frozenset()) == {
+        "co-a"
+    }  # active despite no active params
 
     widget = ChooseWhenNode(
         "WIDGET", {"1": [_CoLeaf("co-b")]}, None, widget_param_refs={"WIDGET"}

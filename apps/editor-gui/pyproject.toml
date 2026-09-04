@@ -1,5 +1,5 @@
 [project]
-name = "editor-gui"
+name = "xknx-editor"
 version = "0.1.0"
 description = "XKNX Editor - KNX project editor"
 requires-python = ">=3.13"

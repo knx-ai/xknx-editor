@@ -180,7 +180,9 @@ def test_export_emits_com_object_flag_overrides(tmp_path: Path) -> None:
         for co in d.com_objects
         if co.ref_id == "M-1_A-1_O-1_R-1"
     )
-    svc.set_com_object_flag(pid, co1, "write_flag", True)  # O-1: override write; O-2: no overrides
+    svc.set_com_object_flag(
+        pid, co1, "write_flag", True
+    )  # O-1: override write; O-2: no overrides
     svc.close(pid)
 
     out = tmp_path / "out.knxproj"
@@ -192,7 +194,9 @@ def test_export_emits_com_object_flag_overrides(tmp_path: Path) -> None:
     o1 = next(r for r in refs if "O-1_R-1" in r)
     o2 = next(r for r in refs if "O-2_R-1" in r)
     assert 'WriteFlag="Enabled"' in o1  # the override is emitted
-    assert "Flag=" not in o2  # untouched object emits no flag attribute (inherits default)
+    assert (
+        "Flag=" not in o2
+    )  # untouched object emits no flag attribute (inherits default)
 
 
 def test_commissioning_state_round_trip(tmp_path: Path) -> None:
