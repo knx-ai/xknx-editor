@@ -1,0 +1,23 @@
+# Dutch translations for connection plugin
+msgid ""
+msgstr ""
+"Language: nl\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Connection"
+msgstr "Verbinding"
+
+msgid "Connect"
+msgstr "Verbinden"
+
+msgid "Disconnect"
+msgstr "Verbreken"
+
+msgid "Connected: {ip}"
+msgstr "Verbonden: {ip}"
+
+msgid "Connected to {ip}"
+msgstr "Verbonden met {ip}"
+
+msgid "Disconnected"
+msgstr "Niet verbonden"

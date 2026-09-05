@@ -1,0 +1,41 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor cockpit 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Overview"
+msgstr "Übersicht"
+
+msgid "No project open"
+msgstr "Kein Projekt geöffnet"
+
+msgid "Filter devices..."
+msgstr "Geräte filtern..."
+
+msgid "Needs attention only"
+msgstr "Nur Handlungsbedarf"
+
+msgid "{count} device(s) not in catalog"
+msgstr "{count} Gerät(e) nicht im Katalog"
+
+msgid "Address"
+msgstr "Adresse"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Product"
+msgstr "Produkt"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Device Overview"
+msgstr "Geräteübersicht"

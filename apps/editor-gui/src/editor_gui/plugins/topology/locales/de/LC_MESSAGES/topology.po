@@ -1,0 +1,26 @@
+#
+msgid ""
+msgstr ""
+"Language: de\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Topology"
+msgstr "Topologie"
+
+msgid "No project open"
+msgstr "Kein Projekt geöffnet"
+
+msgid "unassigned"
+msgstr "nicht zugeordnet"
+
+msgid "Area -> Line -> Device. Click a device to open it."
+msgstr "Bereich -> Linie -> Gerät. Klicke ein Gerät, um es zu öffnen."
+
+msgid "Ctrl+scroll to zoom. Click a device to open it."
+msgstr "Strg+Scrollen zum Zoomen. Klicke ein Gerät, um es zu öffnen."
+
+msgid "Building view"
+msgstr "Gebäudeansicht"
+
+msgid "Ctrl/Cmd+scroll to zoom. Click a device to open it."
+msgstr "Strg/Cmd+Scrollen zum Zoomen. Klicke ein Gerät, um es zu öffnen."

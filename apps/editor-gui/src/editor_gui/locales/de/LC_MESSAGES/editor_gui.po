@@ -1,0 +1,451 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor editor_gui 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "XKNX Editor"
+msgstr "XKNX Editor"
+
+msgid "Help"
+msgstr "Hilfe"
+
+msgid "About"
+msgstr "Über"
+
+msgid "Language"
+msgstr "Sprache"
+
+msgid "Version {version}"
+msgstr "Version {version}"
+
+msgid ""
+"A desktop editor for building-automation installation projects, built on the"
+" open-source xknx library. Not affiliated with or endorsed by the KNX "
+"Association."
+msgstr ""
+"Ein Desktop-Editor für Gebäudeautomations-Installationsprojekte, basierend "
+"auf der Open-Source-Bibliothek xknx. Nicht angeschlossen an oder unterstützt"
+" von der KNX Association."
+
+msgid "Add"
+msgstr "Hinzufügen"
+
+msgid "Close"
+msgstr "Schließen"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+
+msgid "Clear"
+msgstr "Löschen"
+
+msgid "Stop"
+msgstr "Stoppen"
+
+msgid "All files"
+msgstr "Alle Dateien"
+
+msgid "Project: {name}  ·  {devices} devices  ·  {gas} GAs"
+msgstr "Projekt: {name}  ·  {devices} Geräte  ·  {gas} GAs"
+
+msgid "No project open"
+msgstr "Kein Projekt geöffnet"
+
+msgid "Programming {address}..."
+msgstr "Programmiere {address}..."
+
+msgid "Testing {address}..."
+msgstr "Teste {address}..."
+
+msgid "Programming complete"
+msgstr "Programmierung abgeschlossen"
+
+msgid "Programming failed"
+msgstr "Programmierung fehlgeschlagen"
+
+msgid "No KNX connection"
+msgstr "Keine KNX-Verbindung"
+
+msgid "KNX Master v{version} ({date})"
+msgstr "KNX Master v{version} ({date})"
+
+msgid "File"
+msgstr "Datei"
+
+msgid "New Project"
+msgstr "Neues Projekt"
+
+msgid "Open Project"
+msgstr "Projekt öffnen"
+
+msgid "Open Recent"
+msgstr "Zuletzt geöffnet"
+
+msgid "Settings..."
+msgstr "Einstellungen..."
+
+msgid "MCP"
+msgstr "MCP"
+
+msgid "Settings"
+msgstr "Einstellungen"
+
+msgid "Gateway"
+msgstr "Gateway"
+
+msgid "Catalog"
+msgstr "Katalog"
+
+msgid "Use multicast routing (instead of tunneling)"
+msgstr "Multicast-Routing verwenden (statt Tunneling)"
+
+msgid "Gateway IP"
+msgstr "Gateway-IP"
+
+msgid "Multicast group"
+msgstr "Multicast-Gruppe"
+
+msgid ""
+"Run the MCP server so an LLM can drive the editor over Streamable HTTP. It "
+"shares this app's catalog database."
+msgstr ""
+"MCP-Server starten, damit ein LLM das Toolkit über Streamable HTTP steuern "
+"kann. Der Server nutzt die Katalogdatenbank dieser App."
+
+msgid "MCP host"
+msgstr "MCP-Host"
+
+msgid "MCP port"
+msgstr "MCP-Port"
+
+msgid "Server: running"
+msgstr "Server: läuft"
+
+msgid "Server: stopped"
+msgstr "Server: gestoppt"
+
+msgid "Start server"
+msgstr "Server starten"
+
+msgid "Stop server"
+msgstr "Server stoppen"
+
+msgid "Download language"
+msgstr "Downloadsprache"
+
+msgid "MCP running"
+msgstr "MCP läuft"
+
+msgid "Welcome"
+msgstr "Willkommen"
+
+msgid "Create a new project or open an existing one to get started."
+msgstr ""
+"Erstellen Sie ein neues Projekt oder öffnen Sie ein vorhandenes, um zu "
+"beginnen."
+
+msgid "Recent projects"
+msgstr "Letzte Projekte"
+
+msgid "Export .knxproj..."
+msgstr ".knxproj exportieren..."
+
+msgid "Sign export"
+msgstr "Export signieren"
+
+msgid ""
+"You can sign the .knxproj with your license so it can be opened in ETS. Log "
+"in to sign it, or save the .knxproj without a license."
+msgstr ""
+"Sie können die .knxproj mit Ihrer Lizenz signieren, damit sie in ETS "
+"geöffnet werden kann. Melden Sie sich an, um zu signieren, oder speichern "
+"Sie die .knxproj ohne Lizenz."
+
+msgid "MyKnx username"
+msgstr "MyKnx-Benutzername"
+
+msgid "MyKnx password"
+msgstr "MyKnx-Passwort"
+
+msgid "Log in"
+msgstr "Anmelden"
+
+msgid "Logging in…"
+msgstr "Anmeldung…"
+
+msgid "License"
+msgstr "Lizenz"
+
+msgid "No licenses found on this account"
+msgstr "Keine Lizenzen für dieses Konto gefunden"
+
+msgid "Login failed: {error}"
+msgstr "Anmeldung fehlgeschlagen: {error}"
+
+msgid "Sign & export"
+msgstr "Signieren & exportieren"
+
+msgid "Export without certificate"
+msgstr "Ohne Zertifikat exportieren"
+
+msgid "Export ETS project"
+msgstr "ETS-Projekt exportieren"
+
+msgid "Load .knxprod..."
+msgstr ".knxprod laden..."
+
+msgid "Exit"
+msgstr "Beenden"
+
+msgid "Edit"
+msgstr "Bearbeiten"
+
+msgid "Undo"
+msgstr "Rückgängig"
+
+msgid "Redo"
+msgstr "Wiederholen"
+
+msgid "Open KNX product archive"
+msgstr "KNX-Produktarchiv öffnen"
+
+msgid "KNX product (*.knxprod)"
+msgstr "KNX-Produkt (*.knxprod)"
+
+msgid "ETS project (*.knxproj)"
+msgstr "ETS-Projekt (*.knxproj)"
+
+msgid "Open XKNX project"
+msgstr "XKNX-Projekt öffnen"
+
+msgid "Save XKNX project"
+msgstr "XKNX-Projekt speichern"
+
+msgid "XKNX project (*.xknx)"
+msgstr "XKNX-Projekt (*.xknx)"
+
+msgid "Projects (*.xknx, *.knxproj)"
+msgstr "Projekte (*.xknx, *.knxproj)"
+
+msgid "Working…"
+msgstr "Bitte warten…"
+
+msgid "Importing project — this can take a while for large projects."
+msgstr ""
+"Projekt wird importiert — bei großen Projekten kann dies etwas dauern."
+
+msgid "Loading product catalog…"
+msgstr "Produktkatalog wird geladen…"
+
+msgid "Opening project…"
+msgstr "Projekt wird geöffnet…"
+
+msgid "Project password"
+msgstr "Projektkennwort"
+
+msgid "This ETS project is password protected. Enter its password:"
+msgstr "Dieses ETS-Projekt ist kennwortgeschützt. Geben Sie das Kennwort ein:"
+
+msgid "Wrong password, please try again."
+msgstr "Falsches Kennwort, bitte erneut versuchen."
+
+msgid "OK"
+msgstr "OK"
+
+msgid "{done}/{total} devices"
+msgstr "{done}/{total} Geräte"
+
+msgid "Recover from bus…"
+msgstr "Vom Bus wiederherstellen…"
+
+msgid "No matches"
+msgstr "Keine Treffer"
+
+msgid "Bearer token (optional)"
+msgstr "Bearer-Token (optional)"
+
+msgid "License with a dongle…"
+msgstr "Mit Dongle lizenzieren…"
+
+msgid "License with an ETS dongle"
+msgstr "Mit ETS-Dongle lizenzieren"
+
+msgid ""
+"If you have a licensed ETS (dongle or local license), you can license this project in your own ETS instead of signing it online. Export it here without a certificate, then bring it into ETS.\n"
+"\n"
+"Step 1 - Export: choose 'Export without certificate' below and save the .knxproj.\n"
+"\n"
+"Step 2 - Import into ETS (try this first):\n"
+"ETS 5: on the dashboard, click 'Project import', pick the .knxproj and open it.\n"
+"ETS 6: on the dashboard, click 'Import Project' under the 'Overview' tab (also on the 'Local Projects' list or the taskbar context menu).\n"
+"\n"
+"A licensed ETS may refuse the import: the file carries only the normal folder signature, not the online project certificate a licensed ETS writes on export. If the import is rejected, use Step 3.\n"
+"\n"
+"Step 3 - Copy into the ProjectStore (fallback that always works):\n"
+"1. A .knxproj is a ZIP; unzip it to get the project folder named P-XXXX.\n"
+"2. Copy that P-XXXX folder into your ETS ProjectStore:\n"
+"   ETS 5: C:\\ProgramData\\KNX\\ETS5\\ProjectStore\n"
+"   ETS 6: C:\\ProgramData\\KNX\\ETS6\\ProjectStore\n"
+"   (ProgramData is hidden - enable 'Hidden items' in Explorer.)\n"
+"3. ETS 6 only: inside the copied folder create an empty file named P-XXXX_M-dummy (no file extension) so ETS 6 lists the project.\n"
+"4. Start ETS with the dongle plugged in; the project appears in the local project list and your license applies.\n"
+"\n"
+"Tip: to confirm a folder's project name, open the 'P' (P.xml) file inside P-XXXX in a text editor - the name is near the top.\n"
+"\n"
+"Note: license device limits still apply to what you can commission - ETS Demo up to 5 devices, Lite up to 20, Professional unlimited."
+msgstr ""
+"Wenn du eine lizenzierte ETS (Dongle oder lokale Lizenz) hast, kannst du dieses Projekt in deiner eigenen ETS lizenzieren, statt es online zu signieren. Exportiere es hier ohne Zertifikat und bringe es dann in die ETS.\n"
+"\n"
+"Schritt 1 - Export: unten 'Export without certificate' wählen und die .knxproj speichern.\n"
+"\n"
+"Schritt 2 - In ETS importieren (zuerst versuchen):\n"
+"ETS 5: im Dashboard auf 'Projekt importieren' klicken, die .knxproj auswählen und öffnen.\n"
+"ETS 6: im Dashboard auf 'Projekt importieren' unter dem Reiter 'Übersicht' klicken (auch über die Liste 'Lokale Projekte' oder das Kontextmenü in der Taskleiste).\n"
+"\n"
+"Eine lizenzierte ETS kann den Import ablehnen: Die Datei trägt nur die normale Ordnersignatur, nicht das Online-Projektzertifikat, das eine lizenzierte ETS beim Export schreibt. Wird der Import abgelehnt, nutze Schritt 3.\n"
+"\n"
+"Schritt 3 - In den ProjectStore kopieren (Fallback, funktioniert immer):\n"
+"1. Eine .knxproj ist ein ZIP; entpacke sie, um den Projektordner mit dem Namen P-XXXX zu erhalten.\n"
+"2. Kopiere diesen P-XXXX-Ordner in deinen ETS-ProjectStore:\n"
+"   ETS 5: C:\\ProgramData\\KNX\\ETS5\\ProjectStore\n"
+"   ETS 6: C:\\ProgramData\\KNX\\ETS6\\ProjectStore\n"
+"   (ProgramData ist ausgeblendet - im Explorer 'Ausgeblendete Elemente' aktivieren.)\n"
+"3. Nur ETS 6: im kopierten Ordner eine leere Datei mit dem Namen P-XXXX_M-dummy (ohne Dateiendung) anlegen, damit ETS 6 das Projekt anzeigt.\n"
+"4. ETS mit eingestecktem Dongle starten; das Projekt erscheint in der lokalen Projektliste und deine Lizenz gilt.\n"
+"\n"
+"Tipp: Um den Projektnamen eines Ordners zu prüfen, öffne die Datei 'P' (P.xml) in P-XXXX in einem Texteditor - der Name steht oben.\n"
+"\n"
+"Hinweis: Die Geräte-Limits der Lizenz gelten weiterhin für die Inbetriebnahme - ETS Demo bis 5 Geräte, Lite bis 20, Professional unbegrenzt."
+
+msgid "Export format"
+msgstr "Exportformat"
+
+msgid "ETS 6 (schema 20)"
+msgstr "ETS 6 (Schema 20)"
+
+msgid "ETS 5 (schema 14)"
+msgstr "ETS 5 (Schema 14)"
+
+msgid "Back"
+msgstr "Zurück"
+
+msgid "MCP Server"
+msgstr "MCP Server"
+
+msgid ""
+"This .knxproj was exported without an online certificate, so a licensed ETS will not import it directly - it reports a missing signature. Use one of the methods below to bring the project into your own licensed ETS (with a dongle). Method 2 is the quick, reliable route; do it exactly as described.\n"
+"\n"
+"Method 2 - add an empty dummy-license marker (recommended)\n"
+"\n"
+"   1. A .knxproj is a ZIP archive. Open it with 7-Zip, or copy it and rename the copy's extension from .knxproj to .zip.\n"
+"   2. Find the 4-digit project id 'P-XXXX' - for example the file 'P-XXXX.signature' in the archive root (such as P-016A.signature).\n"
+"   3. Create an empty file named exactly 'P-XXXX_M-dummy': the same P-XXXX with '_M-dummy' appended (for example P-016A_M-dummy). It must have no file extension - not .txt.\n"
+"   4. Drag that empty file into the open .knxproj, into the archive root next to 'P-XXXX.signature'. Keep the original 'P-XXXX.signature' - the dummy is added alongside it, not instead of it.\n"
+"   5. Import the .knxproj into ETS with your dongle. It now imports without the 'signature missing' error.\n"
+"\n"
+"   Tip: in Windows Explorer, first turn off 'Hide extensions for known file types', so the name stays 'P-XXXX_M-dummy' and does not silently become 'P-XXXX_M-dummy.txt'.\n"
+"\n"
+"Method 3 - clone in a licensed ETS 5 (fallback if Method 2 does not work)\n"
+"\n"
+"   1. Copy the whole 'P-XXXX' folder into C:\\ProgramData\\KNX\\ETS5\\ProjectStore on the licensed ETS 5 PC (the file 'P' inside the folder holds the project name).\n"
+"   2. Start ETS 5 - the project appears in the project list.\n"
+"   3. Right-click it and choose Copy > As Clone. The clone is a licensed project that you can export and then import into ETS 6."
+msgstr ""
+"Diese .knxproj wurde ohne Online-Zertifikat exportiert, daher importiert ein lizenziertes ETS sie nicht direkt - es meldet eine fehlende Signatur. Nutze eine der folgenden Methoden, um das Projekt in dein eigenes lizenziertes ETS (mit Dongle) zu bringen. Methode 2 ist der schnelle, zuverlässige Weg; führe sie genau wie beschrieben aus.\n"
+"\n"
+"Methode 2 - leeren Dummy-Lizenz-Marker hinzufügen (empfohlen)\n"
+"\n"
+"   1. Eine .knxproj ist ein ZIP-Archiv. Öffne sie mit 7-Zip, oder kopiere sie und ändere die Endung der Kopie von .knxproj auf .zip.\n"
+"   2. Suche die 4-stellige Projekt-ID 'P-XXXX' - z. B. die Datei 'P-XXXX.signature' im Wurzelverzeichnis des Archivs (etwa P-016A.signature).\n"
+"   3. Erstelle eine leere Datei mit exakt dem Namen 'P-XXXX_M-dummy': dieselbe P-XXXX mit hinten angehängtem '_M-dummy' (zum Beispiel P-016A_M-dummy). Sie darf keine Dateiendung haben - kein .txt.\n"
+"   4. Ziehe diese leere Datei per Drag&Drop in die geöffnete .knxproj, ins Wurzelverzeichnis neben 'P-XXXX.signature'. Lass die originale 'P-XXXX.signature' drin - die Dummy-Datei kommt zusätzlich dazu, nicht an ihrer Stelle.\n"
+"   5. Importiere die .knxproj mit deinem Dongle in ETS. Sie wird jetzt ohne den Fehler 'Signatur fehlt' importiert.\n"
+"\n"
+"   Tipp: Schalte im Windows-Explorer zuerst 'Erweiterungen bei bekannten Dateitypen ausblenden' aus, damit der Name 'P-XXXX_M-dummy' bleibt und nicht heimlich zu 'P-XXXX_M-dummy.txt' wird.\n"
+"\n"
+"Methode 3 - in einem lizenzierten ETS 5 klonen (Fallback, falls Methode 2 nicht klappt)\n"
+"\n"
+"   1. Kopiere den kompletten Ordner 'P-XXXX' nach C:\\ProgramData\\KNX\\ETS5\\ProjectStore auf dem lizenzierten ETS-5-PC (die Datei 'P' im Ordner enthält den Projektnamen).\n"
+"   2. Starte ETS 5 - das Projekt erscheint in der Projektliste.\n"
+"   3. Rechtsklick > Kopieren > Als Klon. Der Klon ist ein lizenziertes Projekt, das du exportieren und dann in ETS 6 importieren kannst."
+
+msgid "Exported to {path} ({size})"
+msgstr "Exportiert nach {path} ({size})"
+
+msgid "ETS 6 (schema 22)"
+msgstr "ETS 6 (Schema 22)"
+
+msgid "ETS 5 (schema 20)"
+msgstr "ETS 5 (Schema 20)"
+
+msgid "ETS 6 (schema 23)"
+msgstr "ETS 6 (Schema 23)"
+
+msgid "AI"
+msgstr "KI"
+
+msgid "This editor is controllable by an AI assistant (Claude, Codex, ...) through the built-in MCP server: it exposes the catalog and project as tools over Streamable HTTP. Start the server below, then register its endpoint in your AI tool."
+msgstr "Dieser Editor ist von einer KI (Claude, Codex, ...) über den eingebauten MCP-Server steuerbar: er stellt Katalog und Projekt als Tools über Streamable HTTP bereit. Starte unten den Server und trage seinen Endpunkt in deinem KI-Tool ein."
+
+msgid "MCP endpoint"
+msgstr "MCP-Endpunkt"
+
+msgid "Example: register the MCP server in your AI tool (adjust host/port):"
+msgstr "Beispiel: MCP-Server im KI-Tool eintragen (Host/Port anpassen):"
+
+
+msgid "Copied"
+msgstr "Kopiert"
+
+msgid "Copy"
+msgstr "Kopieren"
+
+msgid "Use host 0.0.0.0 to make the server reachable from other devices on the network; 127.0.0.1/localhost only allows this machine."
+msgstr "Host 0.0.0.0 verwenden, damit der Server von anderen Geräten im Netzwerk erreichbar ist; 127.0.0.1/localhost erlaubt nur dieses Gerät."
+
+msgid "Switching language…"
+msgstr "Sprache wird gewechselt…"
+
+msgid "Load OpenKNX from URL..."
+msgstr "OpenKNX von URL laden..."
+
+msgid "Load OpenKNX from URL"
+msgstr "OpenKNX von URL laden"
+
+msgid "Paste an OpenKNX release link (e.g. a GitHub release .zip). A .knxprod or a KNX product XML URL also works."
+msgstr "Link zu einem OpenKNX-Release (z. B. eine GitHub-Release-.zip) einfügen. Eine .knxprod- oder KNX-Produkt-XML-URL funktioniert auch."
+
+msgid "Load"
+msgstr "Laden"
+
+msgid "Downloading and importing..."
+msgstr "Herunterladen und importieren..."
+
+msgid "Imported {count} product(s) from URL"
+msgstr "{count} Produkt(e) von URL importiert"
+
+msgid "Nothing new imported (already in the catalog)"
+msgstr "Nichts Neues importiert (bereits im Katalog)"
+
+msgid "Import from URL failed: {error}"
+msgstr "Import von URL fehlgeschlagen: {error}"
+
+msgid "Paste an OpenKNX GitHub release URL (the release page works — the .zip asset is found automatically). A direct .knxprod or KNX product XML link also works."
+msgstr "OpenKNX-GitHub-Release-URL einfügen (die Release-Seite funktioniert — das .zip-Asset wird automatisch gefunden). Ein direkter .knxprod- oder KNX-Produkt-XML-Link geht auch."
+
+msgid "Paste an OpenKNX GitHub release URL (the release page works — the .zip asset is found automatically). A direct .knxprod or KNX product XML link also works.\nExamples:\n  https://github.com/OpenKNX/OAM-PresenceModule/releases/tag/3.6.2-Release\n  https://github.com/OpenKNX/OAM-PresenceModule/releases/latest"
+msgstr "OpenKNX-GitHub-Release-URL einfügen (die Release-Seite funktioniert — das .zip-Asset wird automatisch gefunden). Ein direkter .knxprod- oder KNX-Produkt-XML-Link geht auch.\nBeispiele:\n  https://github.com/OpenKNX/OAM-PresenceModule/releases/tag/3.6.2-Release\n  https://github.com/OpenKNX/OAM-PresenceModule/releases/latest"
+
+msgid "Save as..."
+msgstr "Speichern unter..."
+
+msgid "Saved as {name}"
+msgstr "Gespeichert als {name}"
+
+msgid "Save project as"
+msgstr "Projekt speichern unter"

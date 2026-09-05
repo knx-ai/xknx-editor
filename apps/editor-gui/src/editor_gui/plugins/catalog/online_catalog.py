@@ -1,0 +1,488 @@
+"""Client for the anonymous KNX online catalog service.
+
+It is a plain HTTP file-style REST service with no authentication:
+
+- ``GET {base}/Download/Manufacturers`` -> XML, one ``<unsignedShort>`` per manufacturer
+- the manufacturer *names* come from the public master data file
+  (``https://update.knx.org/data/XML/project-23/knx_master.xml``), the same file shipped
+  in every ``.knxprod`` and our ``.knxproj`` export already uses
+
+Beyond the manufacturer list, a manufacturer's product index
+(``GET {base}/Download/Index/{mfr}``) and the ``.knxprod`` download
+(``POST {base}/Download/DownloadProduct`` with ``{"CatalogIds": [...], "LanguageIds": [...]}``)
+are also anonymous, so the GUI can browse and download products without a MyKnx login.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+import urllib.request
+import xml.etree.ElementTree as ET
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+
+DEFAULT_BASE_URL = "https://onlinecatalog.knx.org"
+MASTER_DATA_URL = "https://update.knx.org/data/XML/project-23/knx_master.xml"
+_CACHE_FILE = "online_catalog_manufacturers.json"
+_INDEX_CACHE_FILE = "online_catalog_index.json"
+_INDEX_SAVE_EVERY = (
+    10  # persist the growing index every N manufacturers, for resumability
+)
+_TIMEOUT_SECONDS = 30.0
+
+# Country/language choices for online product downloads (label -> KNX language id used as the
+# DownloadProduct LanguageIds). Kept short and covering the common KNX markets.
+CATALOG_LANGUAGES: list[tuple[str, str]] = [
+    ("Deutschland (de-DE)", "de-DE"),
+    ("English US (en-US)", "en-US"),
+    ("English UK (en-GB)", "en-GB"),
+    ("France (fr-FR)", "fr-FR"),
+    ("Italia (it-IT)", "it-IT"),
+    ("España (es-ES)", "es-ES"),
+    ("Nederland (nl-NL)", "nl-NL"),
+    ("Polska (pl-PL)", "pl-PL"),
+]
+DEFAULT_LANGUAGE = "en-US"
+
+
+class OnlineCatalogError(Exception):
+    """Raised when the online catalog service cannot be reached or returns bad data."""
+
+
+@dataclass(frozen=True)
+class OnlineManufacturer:
+    id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class OnlineCatalogItem:
+    """A downloadable product entry from a manufacturer's online catalog index."""
+
+    id: str
+    name: str
+    order_number: str
+    downloadable: bool
+    manufacturer_id: int = 0  # 0 = unknown (older cache entries)
+    manufacturer_name: str = ""
+    application_version: int | None = None  # application program version, e.g. 40
+    application_program_name: str = ""  # e.g. "Dimmen 4fach, HSV/RGBW LED, REG"
+
+
+@dataclass(frozen=True)
+class OnlineIndexStatus:
+    """Summary of the on-disk product index cache (for the UI)."""
+
+    manufacturers: int
+    products: int
+    fetched_at: str | None
+
+
+def _local_name(tag: object) -> str:
+    """The element's tag without its XML namespace (both feeds use namespaces)."""
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def parse_manufacturer_ids(xml_bytes: bytes) -> list[int]:
+    """Parse the ``Download/Manufacturers`` XML into a sorted list of manufacturer ids."""
+    root = ET.fromstring(xml_bytes)
+    ids = [
+        int(e.text)
+        for e in root
+        if _local_name(e.tag) == "unsignedShort" and (e.text or "").strip()
+    ]
+    if not ids:
+        raise OnlineCatalogError("manufacturer list is empty")
+    return sorted(ids)
+
+
+def parse_manufacturer_names(xml_bytes: bytes) -> dict[int, str]:
+    """Parse ``knx_master.xml`` into ``{manufacturer_id: name}``."""
+    root = ET.fromstring(xml_bytes)
+    names: dict[int, str] = {}
+    for element in root.iter():
+        if _local_name(element.tag) != "Manufacturer":
+            continue
+        # The numeric KNX manufacturer id is ``KnxManufacturerId``; ``Id`` is ``M-xxxx``.
+        mid = element.get("KnxManufacturerId") or (
+            element.get("Id") or ""
+        ).removeprefix("M-")
+        if not mid.isdigit():
+            continue
+        names[int(mid)] = element.get("Name") or f"M-{int(mid):04d}"
+    if not names:
+        raise OnlineCatalogError("master data contains no manufacturers")
+    return names
+
+
+_USER_AGENT = "xknx-editor/0.1"
+
+
+def _http_get(url: str) -> bytes:
+    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            return response.read()
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", None) or exc
+        raise OnlineCatalogError(f"{url}: {reason}") from exc
+
+
+def _http_post(url: str, body: bytes, content_type: str = "application/json") -> bytes:
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"User-Agent": _USER_AGENT, "Content-Type": content_type},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
+            return response.read()
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", None) or exc
+        raise OnlineCatalogError(f"{url}: {reason}") from exc
+
+
+def _ci_get(d: dict, key: str) -> object:
+    """Case-insensitive dict lookup (the server's JSON casing is not pinned here)."""
+    for k, v in d.items():
+        if k.lower() == key.lower():
+            return v
+    return None
+
+
+def _app_version(app_ident: object) -> int | None:
+    """Application program version from an ``ApplicationIdentifier``.
+
+    In the online index this is a list ``[_, manufacturerId, _, applicationNumber, version]``
+    (e.g. ``[0, 131, 0, 64, 40]`` -> 40). Also accepts the string id form
+    ``M-XXXX_A-NNNN-VV-...`` where ``VV`` is the version in hex. Returns None if unknown."""
+    if isinstance(app_ident, list) and app_ident:
+        last = app_ident[-1]
+        return last if isinstance(last, int) else None
+    if isinstance(app_ident, str):
+        parts = app_ident.split("-")
+        if len(parts) >= 4:
+            try:
+                return int(parts[3], 16)
+            except ValueError:
+                return None
+    return None
+
+
+def parse_catalog_items(index_bytes: bytes) -> list[OnlineCatalogItem]:
+    """Parse a ``Download/Index/{mfr}`` response into downloadable catalog items.
+
+    The index is Newtonsoft-JSON ``IndexFileData`` with an ``Entries`` array; each entry carries an
+    ``Id``, ``CatalogItemName``/``ProductName``, ``OrderNumber`` and download-gating flags
+    (``NoDownloadWithoutPlugin``, ``DownloadInfoIncomplete``, ``RequiresExternalSoftware``). Sorted
+    by display name.
+    """
+    try:
+        data = json.loads(index_bytes)
+    except ValueError as exc:
+        raise OnlineCatalogError(f"index is not valid JSON: {exc}") from exc
+
+    mfr_id = 0
+    if isinstance(data, dict):
+        raw_mid = _ci_get(data, "ManufacturerId")
+        if isinstance(raw_mid, int):
+            mfr_id = raw_mid
+        elif isinstance(raw_mid, str) and raw_mid.strip().lstrip("-").isdigit():
+            mfr_id = int(raw_mid)
+    mfr_name = (
+        str(_ci_get(data, "ManufacturerName") or "") if isinstance(data, dict) else ""
+    )
+
+    entries = _ci_get(data, "Entries") if isinstance(data, dict) else None
+    items: list[OnlineCatalogItem] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            cid = _ci_get(entry, "Id")
+            if not (isinstance(cid, str) and cid):
+                continue
+            name = (
+                _ci_get(entry, "CatalogItemName")
+                or _ci_get(entry, "ProductName")
+                or cid
+            )
+            order = _ci_get(entry, "OrderNumber") or ""
+            downloadable = not (
+                bool(_ci_get(entry, "NoDownloadWithoutPlugin"))
+                or bool(_ci_get(entry, "DownloadInfoIncomplete"))
+                or bool(_ci_get(entry, "RequiresExternalSoftware"))
+            )
+            items.append(
+                OnlineCatalogItem(
+                    id=cid,
+                    name=str(name),
+                    order_number=str(order),
+                    downloadable=downloadable,
+                    manufacturer_id=mfr_id,
+                    manufacturer_name=mfr_name,
+                    application_version=_app_version(
+                        _ci_get(entry, "ApplicationIdentifier")
+                    ),
+                    application_program_name=str(
+                        _ci_get(entry, "ApplicationProgramName") or ""
+                    ),
+                )
+            )
+    items.sort(key=lambda i: i.name.lower())
+    return items
+
+
+def _item_to_dict(item: OnlineCatalogItem) -> dict[str, object]:
+    """Slim on-disk form of a catalog item (only what search/display needs; drops translations)."""
+    return {
+        "id": item.id,
+        "name": item.name,
+        "order": item.order_number,
+        "dl": item.downloadable,
+        "mid": item.manufacturer_id,
+        "mname": item.manufacturer_name,
+        "ver": item.application_version,
+        "appname": item.application_program_name,
+    }
+
+
+def _item_from_dict(d: dict[str, object]) -> OnlineCatalogItem:
+    ver = d.get("ver")
+    return OnlineCatalogItem(
+        id=str(d.get("id") or ""),
+        name=str(d.get("name") or ""),
+        order_number=str(d.get("order") or ""),
+        downloadable=bool(d.get("dl")),
+        manufacturer_id=int(d.get("mid") or 0),
+        manufacturer_name=str(d.get("mname") or ""),
+        application_version=ver if isinstance(ver, int) else None,
+        application_program_name=str(d.get("appname") or ""),
+    )
+
+
+def search_index(
+    index: dict[int, list[OnlineCatalogItem]], query: str, limit: int = 300
+) -> tuple[list[OnlineCatalogItem], int]:
+    """Flat cross-manufacturer product search over a built index.
+
+    Matches ``query`` (case-insensitive) against order number, name and application program name.
+    Returns ``(results, total_matches)``; ``results`` is capped at ``limit`` and ordered so the
+    most relevant come first (order-number prefix > order-number contains > name/other). ``total``
+    is the full match count before capping, so the UI can say "showing 300 of N"."""
+    key = query.strip().lower()
+    if not key:
+        return [], 0
+
+    def rank(item: OnlineCatalogItem) -> int:
+        order = item.order_number.lower()
+        if order == key:
+            return 0
+        if order.startswith(key):
+            return 1
+        if key in order:
+            return 2
+        if item.name.lower().startswith(key):
+            return 3
+        return 4
+
+    matches = [
+        item
+        for items in index.values()
+        for item in items
+        if key in item.order_number.lower()
+        or key in item.name.lower()
+        or key in item.application_program_name.lower()
+    ]
+    matches.sort(key=lambda i: (rank(i), i.order_number.lower(), i.name.lower()))
+    return matches[:limit], len(matches)
+
+
+class OnlineCatalogClient:
+    """Fetches the manufacturer list, with a small on-disk cache.
+
+    The cache lives next to the catalog database. ``cached_manufacturers`` is a pure read
+    (for per-frame UI use); ``refresh_manufacturers`` hits the network and replaces the cache.
+    """
+
+    def __init__(self, cache_dir: Path, base_url: str = DEFAULT_BASE_URL) -> None:
+        self._cache_path = cache_dir / _CACHE_FILE
+        self._index_path = cache_dir / _INDEX_CACHE_FILE
+        self._base_url = base_url
+        self._lock = threading.Lock()
+        # Full product index (all manufacturers), kept in memory once loaded so per-frame UI reads
+        # are cheap; persisted to disk (slim fields only) so it survives restarts.
+        self._index_lock = threading.Lock()
+        self._index: dict[int, list[OnlineCatalogItem]] | None = None
+        self._index_fetched_at: str | None = None
+        self._index_loaded = False
+
+    def _load_cache(self) -> list[OnlineManufacturer] | None:
+        try:
+            raw = json.loads(self._cache_path.read_text(encoding="utf-8"))
+            return [OnlineManufacturer(item["id"], item["name"]) for item in raw]
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def _save_cache(self, manufacturers: list[OnlineManufacturer]) -> None:
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._cache_path.write_text(
+                json.dumps(
+                    [{"id": m.id, "name": m.name} for m in manufacturers],
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass  # a missing cache only costs a re-download, never a failure
+
+    def cached_manufacturers(self) -> list[OnlineManufacturer] | None:
+        """Return the manufacturer list from the cache, or None; never touches the network."""
+        with self._lock:
+            return self._load_cache()
+
+    def refresh_manufacturers(self) -> list[OnlineManufacturer]:
+        """Download the manufacturer list and replace the cache."""
+        with self._lock:
+            return self._fetch_locked()
+
+    def download_index(self, manufacturer_id: int) -> bytes:
+        """Download a manufacturer's catalog index (JSON ``IndexFileData``)."""
+        return _http_get(f"{self._base_url}/Download/Index/{manufacturer_id}")
+
+    def catalog_items(self, manufacturer_id: int) -> list[OnlineCatalogItem]:
+        """Return the downloadable catalog items offered for ``manufacturer_id`` (hits the network)."""
+        return parse_catalog_items(self.download_index(manufacturer_id))
+
+    def download_product(
+        self, catalog_item_ids: list[str], language_ids: list[str] | None = None
+    ) -> bytes:
+        """Download a ``.knxprod`` bundle for the given catalog items.
+
+        Mirrors the ``POST Download/DownloadProduct`` endpoint with a JSON body
+        ``{"CatalogIds": [...], "LanguageIds": [...]}``; the response is the ``.knxprod`` archive.
+        """
+        if not catalog_item_ids:
+            raise OnlineCatalogError("no catalog item ids given")
+        body = json.dumps(
+            {"CatalogIds": catalog_item_ids, "LanguageIds": language_ids or ["en-US"]}
+        ).encode("utf-8")
+        return _http_post(f"{self._base_url}/Download/DownloadProduct", body)
+
+    def _fetch_locked(self) -> list[OnlineManufacturer]:
+        ids = parse_manufacturer_ids(
+            _http_get(f"{self._base_url}/Download/Manufacturers")
+        )
+        names = parse_manufacturer_names(_http_get(MASTER_DATA_URL))
+        manufacturers = [
+            OnlineManufacturer(mid, names.get(mid, f"M-{mid:04d}")) for mid in ids
+        ]
+        self._save_cache(manufacturers)
+        return manufacturers
+
+    # --- full product index (all manufacturers) --------------------------
+
+    def cached_index(self) -> dict[int, list[OnlineCatalogItem]] | None:
+        """The full product index from disk (loaded once into memory), or None if never built.
+        Never touches the network. The returned dict must not be mutated by callers."""
+        with self._index_lock:
+            if not self._index_loaded:
+                self._index, self._index_fetched_at = self._load_index()
+                self._index_loaded = True
+            return self._index
+
+    def index_status(self) -> OnlineIndexStatus:
+        index = self.cached_index() or {}
+        products = sum(len(items) for items in index.values())
+        return OnlineIndexStatus(len(index), products, self._index_fetched_at)
+
+    def refresh_index(
+        self,
+        progress_cb: Callable[[int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+        *,
+        force: bool = False,
+    ) -> OnlineIndexStatus:
+        """Build/refresh the full product index. Resumable: unless ``force``, manufacturers already
+        in the cache are skipped, so an aborted build continues where it stopped. Persists every
+        few manufacturers so a cancel keeps its progress. ``should_cancel`` stops the loop early."""
+        ids = parse_manufacturer_ids(
+            _http_get(f"{self._base_url}/Download/Manufacturers")
+        )
+        with self._index_lock:
+            if not self._index_loaded:
+                self._index, self._index_fetched_at = self._load_index()
+                self._index_loaded = True
+            index: dict[int, list[OnlineCatalogItem]] = dict(self._index or {})
+        if force:
+            index = {}
+        total = len(ids)
+        since_save = 0
+        for done, mid in enumerate(ids, start=1):
+            if should_cancel is not None and should_cancel():
+                break
+            if mid not in index:
+                try:
+                    index[mid] = parse_catalog_items(self.download_index(mid))
+                except OnlineCatalogError:
+                    # Transient error: leave this manufacturer uncached so a later (resumable)
+                    # build retries it, instead of caching [] and skipping it forever.
+                    if progress_cb is not None:
+                        progress_cb(done, total)
+                    continue
+                since_save += 1
+                if since_save >= _INDEX_SAVE_EVERY:
+                    self._publish_index(index)
+                    since_save = 0
+            if progress_cb is not None:
+                progress_cb(done, total)
+        self._publish_index(index)
+        return OnlineIndexStatus(
+            len(index), sum(len(v) for v in index.values()), self._index_fetched_at
+        )
+
+    def _publish_index(self, index: dict[int, list[OnlineCatalogItem]]) -> None:
+        fetched_at = datetime.now(UTC).isoformat(timespec="seconds")
+        with self._index_lock:
+            self._index = dict(index)
+            self._index_fetched_at = fetched_at
+            self._index_loaded = True
+        self._save_index(index, fetched_at)
+
+    def _load_index(
+        self,
+    ) -> tuple[dict[int, list[OnlineCatalogItem]] | None, str | None]:
+        try:
+            raw = json.loads(self._index_path.read_text(encoding="utf-8"))
+            entries = raw["index"]
+            index = {
+                int(mid): [_item_from_dict(d) for d in items]
+                for mid, items in entries.items()
+            }
+            return index, raw.get("fetched_at")
+        except (OSError, ValueError, KeyError, TypeError):
+            return None, None
+
+    def _save_index(
+        self, index: dict[int, list[OnlineCatalogItem]], fetched_at: str
+    ) -> None:
+        try:
+            self._index_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "fetched_at": fetched_at,
+                "index": {
+                    str(mid): [_item_to_dict(i) for i in items]
+                    for mid, items in index.items()
+                },
+            }
+            self._index_path.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError:
+            pass  # a missing cache only costs a re-download, never a failure

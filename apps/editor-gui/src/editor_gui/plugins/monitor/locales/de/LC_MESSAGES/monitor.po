@@ -1,0 +1,47 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor monitor 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Group Monitor"
+msgstr "Gruppenmonitor"
+
+msgid "No group addresses (open or import a project)"
+msgstr "Keine Gruppenadressen (öffnen oder importieren Sie ein Projekt)"
+
+msgid "Not connected"
+msgstr "Nicht verbunden"
+
+msgid "value (e.g. on / 21.5 / 50)"
+msgstr "Wert (z. B. on / 21.5 / 50)"
+
+msgid "Value:"
+msgstr "Wert:"
+
+msgid "Filter by address or name…"
+msgstr "Nach Adresse oder Name filtern…"
+
+msgid "Write"
+msgstr "Schreiben"
+
+msgid "Read"
+msgstr "Lesen"
+
+msgid "Group Objects"
+msgstr "Gruppenobjekte"
+
+msgid "Bus Monitor"
+msgstr "Busmonitor"
+
+msgid "Clear"
+msgstr "Löschen"
+
+msgid "{count} telegrams"
+msgstr "{count} Telegramme"
+
+msgid "Bus load: {rate} telegrams/s"
+msgstr "Buslast: {rate} Telegramme/s"

@@ -1,0 +1,68 @@
+# Dutch translations for base/common strings
+msgid ""
+msgstr ""
+"Language: nl\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "XKNX Toolkit"
+msgstr "XKNX Toolkit"
+
+msgid "Add"
+msgstr "Toevoegen"
+
+msgid "Close"
+msgstr "Sluiten"
+
+msgid "Cancel"
+msgstr "Annuleren"
+
+msgid "Copy"
+msgstr "Kopiëren"
+
+msgid "Clear"
+msgstr "Wissen"
+
+msgid "Stop"
+msgstr "Stoppen"
+
+msgid "All files"
+msgstr "Alle bestanden"
+
+msgid "File"
+msgstr "Bestand"
+
+msgid "New Project"
+msgstr "Nieuw Project"
+
+msgid "Open Project"
+msgstr "Project Openen"
+
+msgid "Load .knxprod..."
+msgstr "Laad .knxprod..."
+
+msgid "Exit"
+msgstr "Afsluiten"
+
+msgid "Edit"
+msgstr "Bewerken"
+
+msgid "Undo"
+msgstr "Ongedaan maken"
+
+msgid "Redo"
+msgstr "Opnieuw"
+
+msgid "Open KNX product archive"
+msgstr "Open KNX product archief"
+
+msgid "KNX product (*.knxprod)"
+msgstr "KNX product (*.knxprod)"
+
+msgid "Open XKNX project"
+msgstr "Open XKNX project"
+
+msgid "Save XKNX project"
+msgstr "Sla XKNX project op"
+
+msgid "XKNX project (*.xknx)"
+msgstr "XKNX project (*.xknx)"

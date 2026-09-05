@@ -1,0 +1,160 @@
+"""High-level facade that owns the engine/store and wraps every core operation."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from pathlib import Path
+
+from sqlalchemy.orm import Session
+
+from xknxeditor.catalog.core.applications import (
+    ApplicationSummary,
+    get_application_detail,
+    get_application_detail_by_id,
+    get_application_xml,
+    list_applications,
+)
+from xknxeditor.catalog.core.catalog_sections import (
+    CatalogSectionNode,
+    build_catalog_tree,
+    collect_section_ids,
+    list_catalog_sections,
+)
+from xknxeditor.catalog.core.hardware import (
+    HardwareFilters,
+    get_hardware,
+    get_hardware_program,
+    get_program_source,
+    list_hardware,
+)
+from xknxeditor.catalog.core.manufacturers import get_manufacturer, list_manufacturers
+from xknxeditor.catalog.core.products import (
+    ProductSummary,
+    find_products_for_application,
+    list_products,
+)
+from xknxeditor.catalog.core.upload import upload_knxprod
+from xknxeditor.catalog.db import knxprod_dir_for, make_engine
+from xknxeditor.catalog.models import (
+    CatalogSection,
+    Hardware,
+    HardwareProgram,
+    Manufacturer,
+)
+from xknxeditor.prod import Application
+
+
+class CatalogService:
+    """Database-owning facade: one session per method call, no manual engine threading."""
+
+    def __init__(self, db_path: str | Path) -> None:
+        db_path = Path(db_path)
+        self._engine = make_engine(f"sqlite:///{db_path}")
+        self._knxprod_dir = knxprod_dir_for(db_path)
+        # Content-addressed cache for parsed application IR (see product.parse_cache), next to the
+        # .knxprod store so it lives with the catalog it belongs to.
+        self._parse_cache_dir = self._knxprod_dir.parent / "ir_cache"
+
+    # --- ingest -----------------------------------------------------------
+
+    def import_knxprod(self, content: bytes) -> Path:
+        """Store and ingest .knxprod bytes (content-hash dedup). Returns the stored path."""
+        return upload_knxprod(content, self._knxprod_dir, self._engine)
+
+    # --- manufacturers ----------------------------------------------------
+
+    def list_manufacturers(self) -> Sequence[Manufacturer]:
+        with Session(self._engine) as db:
+            return list_manufacturers(db)
+
+    def get_manufacturer(self, manufacturer_id: str) -> Manufacturer | None:
+        with Session(self._engine) as db:
+            return get_manufacturer(db, manufacturer_id)
+
+    # --- hardware ---------------------------------------------------------
+
+    def list_hardware(
+        self, filters: HardwareFilters | None = None
+    ) -> Sequence[Hardware]:
+        with Session(self._engine) as db:
+            return list_hardware(db, filters)
+
+    def get_hardware(self, hardware_id: str) -> Hardware | None:
+        with Session(self._engine) as db:
+            return get_hardware(db, hardware_id)
+
+    def get_hardware_program(
+        self, hardware_id: str, program_id: str
+    ) -> HardwareProgram | None:
+        with Session(self._engine) as db:
+            return get_hardware_program(db, hardware_id, program_id)
+
+    def get_application_xml(self, program_id: str) -> tuple[bytes, str] | None:
+        with Session(self._engine) as db:
+            return get_application_xml(db, program_id)
+
+    def get_program_source(self, program_id: str) -> tuple[str, str] | None:
+        """Return ``(knxprod_path, manufacturer_id)`` for a program id, or ``None``."""
+        with Session(self._engine) as db:
+            return get_program_source(db, program_id)
+
+    def get_application_detail(self, program_id: str) -> Application | None:
+        with Session(self._engine) as db:
+            return get_application_detail(db, program_id)
+
+    # --- catalog sections -------------------------------------------------
+
+    def list_catalog_sections(self, manufacturer_id: str) -> Sequence[CatalogSection]:
+        with Session(self._engine) as db:
+            return list_catalog_sections(db, manufacturer_id)
+
+    def catalog_tree(self, manufacturer_id: str) -> list[CatalogSectionNode]:
+        """Nested catalog-section tree for a manufacturer."""
+        with Session(self._engine) as db:
+            return build_catalog_tree(list_catalog_sections(db, manufacturer_id))
+
+    def collect_section_ids(self, section_id: str) -> list[str]:
+        with Session(self._engine) as db:
+            return collect_section_ids(db, section_id)
+
+    # --- applications -----------------------------------------------------
+
+    def list_applications(self) -> list[ApplicationSummary]:
+        """App-first listing of all applications with their manufacturer."""
+        with Session(self._engine) as db:
+            return list_applications(db)
+
+    def list_products(self) -> list[ProductSummary]:
+        """All orderable products with program/application refs."""
+        with Session(self._engine) as db:
+            return list_products(db)
+
+    def get_application(
+        self, application_id: str, language: str | None = None
+    ) -> Application | None:
+        """Resolve an application id to its parsed IR, or ``None``.
+
+        ``language`` selects label locale. The XML parse result is
+        content-addressed and cached on disk next to the .knxprod store."""
+        with Session(self._engine) as db:
+            return get_application_detail_by_id(
+                db, application_id, language, cache_dir=self._parse_cache_dir
+            )
+
+    def find_products_for_application(
+        self,
+        *,
+        manufacturer_id: str,
+        application_number: int,
+        application_version: int | None = None,
+        mask_version: str | None = None,
+    ) -> list[ProductSummary]:
+        """Candidate products matching an application id read off a device."""
+        with Session(self._engine) as db:
+            return find_products_for_application(
+                db,
+                manufacturer_id=manufacturer_id,
+                application_number=application_number,
+                application_version=application_version,
+                mask_version=mask_version,
+            )

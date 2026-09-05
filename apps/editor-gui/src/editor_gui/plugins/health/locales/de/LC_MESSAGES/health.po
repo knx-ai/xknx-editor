@@ -1,0 +1,20 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor health 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Health"
+msgstr "Zustandsprüfung"
+
+msgid "No project open"
+msgstr "Kein Projekt geöffnet"
+
+msgid "No issues found"
+msgstr "Keine Probleme gefunden"
+
+msgid "{errors} errors, {warnings} warnings"
+msgstr "{errors} Fehler, {warnings} Warnungen"

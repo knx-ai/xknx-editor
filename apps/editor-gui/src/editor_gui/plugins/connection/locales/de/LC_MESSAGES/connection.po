@@ -1,0 +1,65 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor connection 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Gateway"
+msgstr "Gateway"
+
+msgid "Connect"
+msgstr "Verbinden"
+
+msgid "Disconnect"
+msgstr "Trennen"
+
+msgid "Discovered gateways"
+msgstr "Erkannte Gateways"
+
+msgid "Diagnostics"
+msgstr "Diagnose"
+
+msgid "Check for devices in programming mode"
+msgstr "Geräte im Programmiermodus suchen"
+
+msgid "No gateways found"
+msgstr "Keine Gateways gefunden"
+
+msgid "Manual connection"
+msgstr "Manuelle Verbindung"
+
+msgid "Connected: {ip}"
+msgstr "Verbunden: {ip}"
+
+msgid "Connected to {ip}"
+msgstr "Verbunden mit {ip}"
+
+msgid "Disconnected"
+msgstr "Nicht verbunden"
+
+msgid "Connecting…"
+msgstr "Verbinde…"
+
+msgid "Connection failed"
+msgstr "Verbindung fehlgeschlagen"
+
+msgid "Scan"
+msgstr "Suchen"
+
+msgid "Settings"
+msgstr "Einstellungen"
+
+msgid "Use multicast routing (instead of tunneling)"
+msgstr "Multicast-Routing verwenden (statt Tunneling)"
+
+msgid "Gateway IP"
+msgstr "Gateway-IP"
+
+msgid "Multicast group"
+msgstr "Multicast-Gruppe"
+
+msgid "Apply"
+msgstr "Übernehmen"

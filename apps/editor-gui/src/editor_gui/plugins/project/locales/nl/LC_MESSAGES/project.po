@@ -1,0 +1,578 @@
+# Dutch translations for project plugin
+msgid ""
+msgstr ""
+"Language: nl\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Devices"
+msgstr "Apparaten"
+
+msgid "Configure"
+msgstr "Configureren"
+
+msgid "History"
+msgstr "Geschiedenis"
+
+msgid "No devices"
+msgstr "Geen apparaten"
+
+msgid "Name"
+msgstr "Naam"
+
+msgid "Individual Address"
+msgstr "Individueel Adres"
+
+msgid "Manufacturer"
+msgstr "Fabrikant"
+
+msgid "Application"
+msgstr "Applicatie"
+
+msgid "Hardware"
+msgstr "Hardware"
+
+msgid "Firmware"
+msgstr "Firmware"
+
+msgid "Parameters ({count})"
+msgstr "Parameters ({count})"
+
+msgid "Com Flags ({count})"
+msgstr "Com Vlaggen ({count})"
+
+msgid "Area {area}"
+msgstr "Gebied {area}"
+
+msgid "{name} (Area {area})"
+msgstr "{name} (Gebied {area})"
+
+msgid "Line {area}.{line}"
+msgstr "Lijn {area}.{line}"
+
+msgid "{name} (Line {area}.{line})"
+msgstr "{name} (Lijn {area}.{line})"
+
+msgid "Unassigned ({count})"
+msgstr "Niet toegewezen ({count})"
+
+msgid "Add Area"
+msgstr "Gebied Toevoegen"
+
+msgid "Add Line"
+msgstr "Lijn Toevoegen"
+
+msgid "Rename"
+msgstr "Hernoemen"
+
+msgid "Delete"
+msgstr "Verwijderen"
+
+msgid "New Area"
+msgstr "Nieuw Gebied"
+
+msgid "New Line"
+msgstr "Nieuwe Lijn"
+
+msgid "Number"
+msgstr "Nummer"
+
+msgid "Project: {name}"
+msgstr "Project: {name}"
+
+msgid "(unsaved)"
+msgstr "(niet opgeslagen)"
+
+msgid "No history"
+msgstr "Geen geschiedenis"
+
+msgid "Restore"
+msgstr "Herstellen"
+
+msgid "Add device: {name}"
+msgstr "Apparaat toevoegen: {name}"
+
+msgid "Remove device: {name}"
+msgstr "Apparaat verwijderen: {name}"
+
+msgid "Address: {old} -> {new}"
+msgstr "Adres: {old} -> {new}"
+
+msgid "Name: {old} -> {new}"
+msgstr "Naam: {old} -> {new}"
+
+msgid "Parameter: {old} -> {new}"
+msgstr "Parameter: {old} -> {new}"
+
+msgid "DPT: {old} -> {new}"
+msgstr "DPT: {old} -> {new}"
+
+msgid "Flag: {flag} -> {state}"
+msgstr "Vlag: {flag} -> {state}"
+
+msgid "Group address {address} created"
+msgstr "Groepsadres {address} aangemaakt"
+
+msgid "Group address {address} removed"
+msgstr "Groepsadres {address} verwijderd"
+
+msgid "Group address: {old} -> {new}"
+msgstr "Groepsadres: {old} -> {new}"
+
+msgid "Com object linked to group address"
+msgstr "Com object gekoppeld aan groepsadres"
+
+msgid "Com object unlinked from group address"
+msgstr "Com object ontkoppeld van groepsadres"
+
+msgid "Area {number} created"
+msgstr "Gebied {number} aangemaakt"
+
+msgid "Area {number} removed"
+msgstr "Gebied {number} verwijderd"
+
+msgid "Area: {old} -> {new}"
+msgstr "Gebied: {old} -> {new}"
+
+msgid "Line {number} created"
+msgstr "Lijn {number} aangemaakt"
+
+msgid "Line {number} removed"
+msgstr "Lijn {number} verwijderd"
+
+msgid "Line: {old} -> {new}"
+msgstr "Lijn: {old} -> {new}"
+
+msgid "Mass Linker"
+msgstr "Massakoppeling"
+
+msgid "GA <> Object"
+msgstr "GA <> Object"
+
+msgid "Object <> Object"
+msgstr "Object <> Object"
+
+msgid "Log"
+msgstr "Logboek"
+
+msgid "Open a project to use the Mass Linker."
+msgstr "Open een project om de Massakoppeling te gebruiken."
+
+msgid "Pairs are matched by list order (1st with 1st, ...). Surplus items on the longer side are ignored. Reorder a list via its right-click menu."
+msgstr "Paren worden gekoppeld op lijstvolgorde (1e met 1e, ...). Overtollige items aan de langere kant worden genegeerd. Herorden een lijst via het rechtermuisknopmenu."
+
+msgid "Source (objects)"
+msgstr "Bron (objecten)"
+
+msgid "Target (group addresses)"
+msgstr "Doel (groepsadressen)"
+
+msgid "Target (objects)"
+msgstr "Doel (objecten)"
+
+msgid "Preview & link"
+msgstr "Voorbeeld & koppelen"
+
+msgid "Add objects..."
+msgstr "Objecten toevoegen..."
+
+msgid "Add group addresses..."
+msgstr "Groepsadressen toevoegen..."
+
+msgid "Add selected"
+msgstr "Selectie toevoegen"
+
+msgid "Clear"
+msgstr "Leegmaken"
+
+msgid "Remove"
+msgstr "Verwijderen"
+
+msgid "Move up"
+msgstr "Omhoog"
+
+msgid "Move down"
+msgstr "Omlaag"
+
+msgid "{count} items"
+msgstr "{count} items"
+
+msgid "{count} pairs"
+msgstr "{count} paren"
+
+msgid "{count} unpaired (ignored)"
+msgstr "{count} zonder paar (genegeerd)"
+
+msgid "Link"
+msgstr "Koppelen"
+
+msgid "GA name ({source}, {target}, {n})"
+msgstr "GA-naam ({source}, {target}, {n})"
+
+msgid "Start address"
+msgstr "Startadres"
+
+msgid "Filter..."
+msgstr "Filter..."
+
+msgid "Add communication objects"
+msgstr "Communicatieobjecten toevoegen"
+
+msgid "Add group addresses"
+msgstr "Groepsadressen toevoegen"
+
+msgid "Linked {count} object(s) to group addresses"
+msgstr "{count} object(en) gekoppeld aan groepsadressen"
+
+msgid "Linked {count} object pair(s) via new group addresses"
+msgstr "{count} objectpaar/paren gekoppeld via nieuwe groepsadressen"
+
+msgid "{count} error(s)"
+msgstr "{count} fout(en)"
+
+msgid "Clear all"
+msgstr "Alles wissen"
+
+msgid "No operations yet."
+msgstr "Nog geen bewerkingen."
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Cancel"
+msgstr "Annuleren"
+
+msgid "Mass Linker result"
+msgstr "Resultaat massakoppeling"
+
+msgid "Tools"
+msgstr "Hulpmiddelen"
+
+msgid "Open a project to use the tools."
+msgstr "Open een project om de hulpmiddelen te gebruiken."
+
+msgid "No devices in this project."
+msgstr "Geen apparaten in dit project."
+
+msgid "Extended Copy"
+msgstr "Uitgebreid kopiëren"
+
+msgid "Shift Addresses"
+msgstr "Adressen verschuiven"
+
+msgid "Labels"
+msgstr "Labels"
+
+msgid "Topology Check"
+msgstr "Topologiecontrole"
+
+msgid "Source device"
+msgstr "Bronapparaat"
+
+msgid "Copies"
+msgstr "Kopieën"
+
+msgid "Find in name"
+msgstr "Zoeken in naam"
+
+msgid "Replace with"
+msgstr "Vervangen door"
+
+msgid "Create group addresses for each copy"
+msgstr "Groepsadressen voor elke kopie aanmaken"
+
+msgid "Copy name: {name}"
+msgstr "Kopienaam: {name}"
+
+msgid "Copy"
+msgstr "Kopiëren"
+
+msgid "Created {count} copy/copies"
+msgstr "{count} kopie(ën) gemaakt"
+
+msgid "Shifts the device part of each individual address. Group addresses are not shifted."
+msgstr "Verschuift het apparaatdeel van elk fysiek adres. Groepsadressen worden niet verschoven."
+
+msgid "Offset"
+msgstr "Verschuiving"
+
+msgid "Selected source device only (from Extended Copy)"
+msgstr "Alleen geselecteerd bronapparaat (uit Uitgebreid kopiëren)"
+
+msgid "(out of range)"
+msgstr "(buiten bereik)"
+
+msgid "Shift addresses"
+msgstr "Adressen verschuiven"
+
+msgid "Shifted {count} address(es)"
+msgstr "{count} adres(sen) verschoven"
+
+msgid "Export {count} device(s) to a CSV for on-site labelling."
+msgstr "{count} apparat(en) naar CSV exporteren voor labeling ter plaatse."
+
+msgid "Export CSV..."
+msgstr "CSV exporteren..."
+
+msgid "Exported to {path}"
+msgstr "Geëxporteerd naar {path}"
+
+msgid "No topology issues found."
+msgstr "Geen topologieproblemen gevonden."
+
+msgid "{count} issue(s)"
+msgstr "{count} probleem/problemen"
+
+msgid "{count} address(es) will change"
+msgstr "{count} adres(sen) worden gewijzigd"
+
+msgid "Click a finding to jump to the device."
+msgstr "Klik op een bevinding om naar het apparaat te springen."
+
+msgid "Add communication objects on the left and existing group addresses in the middle, then click Link: the 1st object links to the 1st address, and so on."
+msgstr "Voeg links communicatieobjecten toe en in het midden bestaande groepsadressen, klik dan Koppelen: 1e object naar 1e adres, enz."
+
+msgid "Add objects on both sides. Each pair gets a new group address that links them (the source sends, the target receives). Set the address name/number below."
+msgstr "Voeg aan beide zijden objecten toe. Elk paar krijgt een nieuw groepsadres dat ze koppelt (bron zendt, doel ontvangt). Stel naam/nummer hieronder in."
+
+msgid "Chronological record of every mass-link operation in this session."
+msgstr "Chronologisch overzicht van alle massakoppelingen in deze sessie."
+
+msgid "Duplicate a device several times. Optionally rewrite the copy name (find/replace) and create a group address for each of its objects."
+msgstr "Dupliceer een apparaat meerdere keren. Optioneel de kopienaam herschrijven (zoeken/vervangen) en voor elk object een groepsadres aanmaken."
+
+msgid "Renumber devices by adding an offset to the device part of their individual addresses, e.g. to open gaps for new devices. Group addresses are untouched."
+msgstr "Apparaten hernummeren door een verschuiving op te tellen bij het apparaatdeel van hun fysieke adressen, bijv. om ruimte te maken voor nieuwe apparaten. Groepsadressen blijven ongewijzigd."
+
+msgid "Export the device list (address, name, order number, manufacturer, description) to a CSV you can print as on-site labels."
+msgstr "Exporteer de apparatenlijst (adres, naam, bestelnummer, fabrikant, beschrijving) naar een CSV die je als labels ter plaatse kunt afdrukken."
+
+msgid "Read-only scan: lists devices with a missing, malformed or duplicate individual address."
+msgstr "Alleen-lezen scan: toont apparaten met een ontbrekend, ongeldig of dubbel fysiek adres."
+
+msgid "All"
+msgstr "Alles"
+
+msgid "None"
+msgstr "Geen"
+
+msgid "{sel} of {total} selected"
+msgstr "{sel} van {total} geselecteerd"
+
+msgid "Filter devices..."
+msgstr "Apparaten filteren..."
+
+msgid "Replace Device"
+msgstr "Apparaat vervangen"
+
+msgid "Swap a device for another model (a template device already in the project), keeping its group-address links. Group objects are matched by number and size; unmatched ones are reported. Parameters are not carried over."
+msgstr "Vervang een apparaat door een ander model (een sjabloonapparaat in het project) met behoud van de groepsadreskoppelingen. Groepsobjecten worden gematcht op nummer en grootte; niet-gematchte worden gemeld. Parameters worden niet overgenomen."
+
+msgid "Device to replace"
+msgstr "Te vervangen apparaat"
+
+msgid "Replace with (template)"
+msgstr "Vervangen door (sjabloon)"
+
+msgid "Group object mapping (by number)"
+msgstr "Groepsobject-toewijzing (op nummer)"
+
+msgid "{count} object(s) will be re-mapped"
+msgstr "{count} object(en) worden opnieuw toegewezen"
+
+msgid "Replace device"
+msgstr "Apparaat vervangen"
+
+msgid "Replaced; re-mapped {count} group object(s)"
+msgstr "Vervangen; {count} groepsobject(en) opnieuw toegewezen"
+
+msgid "Product"
+msgstr "Product"
+
+msgid "Product ref"
+msgstr "Productref"
+
+msgid "Program ref"
+msgstr "Programmaref"
+
+msgid "Copied"
+msgstr "Gekopieerd"
+
+msgid "Click to copy"
+msgstr "Klik om te kopieren"
+
+msgid "Available online ({count})"
+msgstr "Online beschikbaar ({count})"
+
+msgid "(current)"
+msgstr "(huidig)"
+
+msgid "+ Function"
+msgstr "+ Functie"
+
+msgid "New function"
+msgstr "Nieuwe functie"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Create"
+msgstr "Aanmaken"
+
+msgid "Assign group address"
+msgstr "Groepsadres toewijzen"
+
+msgid "Role (optional)"
+msgstr "Rol (optioneel)"
+
+msgid "Custom"
+msgstr "Aangepast"
+
+msgid "Switching (light)"
+msgstr "Schakelen (licht)"
+
+msgid "Dimming (light)"
+msgstr "Dimmen (licht)"
+
+msgid "Blinds / sun protection"
+msgstr "Jaloezie / zonwering"
+
+msgid "Switchable socket"
+msgstr "Schakelbaar stopcontact"
+
+msgid "Confirmed restart"
+msgstr "Bevestigde herstart"
+
+msgid "Delete application program"
+msgstr "Applicatieprogramma verwijderen"
+
+msgid "Factory reset"
+msgstr "Fabrieksreset"
+
+msgid "Factory reset (keep address)"
+msgstr "Fabrieksreset (adres behouden)"
+
+msgid "I understand this resets the device"
+msgstr "Ik begrijp dat dit het apparaat terugzet"
+
+msgid "Master reset"
+msgstr "Master-reset"
+
+msgid "Mismatch: {bytes} byte(s) differ from the device in {locations} location(s)"
+msgstr "Afwijking: {bytes} byte(s) verschillen van het apparaat op {locations} locatie(s)"
+
+msgid "Reset device"
+msgstr "Apparaat terugzetten"
+
+msgid "Reset group address links"
+msgstr "Groepsadreskoppelingen terugzetten"
+
+msgid "Reset individual address"
+msgstr "Fysiek adres terugzetten"
+
+msgid "Reset parameters"
+msgstr "Parameters terugzetten"
+
+msgid "Reset type"
+msgstr "Reset-type"
+
+msgid "Reset..."
+msgstr "Terugzetten…"
+
+msgid "Restart"
+msgstr "Herstart"
+
+msgid "no fault reported"
+msgstr "geen fout gemeld"
+
+msgid "programming mode active"
+msgstr "programmeermodus actief"
+
+msgid "{ready} ready · {amb} ambiguous · {bad} incompatible · {none} unmatched"
+msgstr "{ready} gereed · {amb} dubbelzinnig · {bad} incompatibel · {none} geen overeenkomst"
+
+msgid "(top level)"
+msgstr "(bovenste niveau)"
+
+msgid "+ Space"
+msgstr "+ Ruimte"
+
+msgid "+ Sub-space"
+msgstr "+ Subruimte"
+
+msgid "Assign a device to this space"
+msgstr "Een apparaat aan deze ruimte toewijzen"
+
+msgid "Assign device"
+msgstr "Apparaat toewijzen"
+
+msgid "Building"
+msgstr "Gebouw"
+
+msgid "Building part"
+msgstr "Gebouwdeel"
+
+msgid "Corridor"
+msgstr "Gang"
+
+msgid "Delete this space and everything in it? Devices are only unassigned, not deleted."
+msgstr "Deze ruimte en alles erin verwijderen? Apparaten worden alleen ontkoppeld, niet verwijderd."
+
+msgid "Distribution board"
+msgstr "Verdeelkast"
+
+msgid "Floor"
+msgstr "Verdieping"
+
+msgid "Move to"
+msgstr "Verplaatsen naar"
+
+msgid "New space"
+msgstr "Nieuwe ruimte"
+
+msgid "No unassigned devices"
+msgstr "Geen niet-toegewezen apparaten"
+
+msgid "Remove from space"
+msgstr "Uit ruimte verwijderen"
+
+msgid "Room"
+msgstr "Kamer"
+
+msgid "Stairway"
+msgstr "Trappenhuis"
+
+msgid "Without space"
+msgstr "Zonder ruimte"
+
+msgid "New main group"
+msgstr "Nieuwe hoofdgroep"
+
+msgid "New middle group"
+msgstr "Nieuwe middengroep"
+
+msgid "New folder"
+msgstr "Nieuwe map"
+
+msgid "Rename folder"
+msgstr "Map hernoemen"
+
+msgid "Delete folder"
+msgstr "Map verwijderen"
+
+msgid "Main group name (the next free number is assigned automatically)"
+msgstr "Naam van de hoofdgroep (het volgende vrije nummer wordt automatisch toegewezen)"
+
+msgid "Middle group name (the next free number is assigned automatically)"
+msgstr "Naam van de middengroep (het volgende vrije nummer wordt automatisch toegewezen)"
+
+msgid "Delete this folder and every group address in it? This can be undone."
+msgstr "Deze map en alle groepsadressen erin verwijderen? Dit kan ongedaan worden gemaakt."
+
+msgid ""
+"Editing {count} devices — edits apply to all, diverging values show <differs>"
+msgstr ""
+"{count} apparaten bewerken — wijzigingen gelden voor alle, afwijkende waarden "
+"tonen <verschilt>"
+
+msgid "Apply changes to all channels"
+msgstr "Wijzigingen op alle kanalen toepassen"

@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxeditor.namespaces.files.v10.access_t import Access
+from xknxeditor.namespaces.files.v10.assign_t import Assign
+from xknxeditor.namespaces.files.v10.binary_data_ref_t import BinaryDataRef
+from xknxeditor.namespaces.files.v10.com_object_parameter_choose_t import (
+    ComObjectParameterChoose,
+)
+from xknxeditor.namespaces.files.v10.com_object_ref_ref_t import ComObjectRefRef
+from xknxeditor.namespaces.files.v10.parameter_ref_ref_t import ParameterRefRef
+from xknxeditor.namespaces.files.v10.parameter_separator_t import ParameterSeparator
+
+__NAMESPACE__ = "http://knx.org/xml/project/10"
+
+
+@dataclass(slots=True, kw_only=True)
+class ComObjectParameterBlock:
+    """
+    :ivar choice:
+    :ivar id: registration-relevant
+    :ivar name:
+    :ivar text:
+    :ivar access:
+    :ivar help_topic:
+    :ivar internal_description:
+    :ivar param_ref_id: registration-relevant
+    """
+
+    class Meta:
+        name = "ComObjectParameterBlock_t"
+
+    choice: list[
+        ParameterSeparator
+        | ParameterRefRef
+        | ComObjectParameterChoose
+        | BinaryDataRef
+        | ComObjectRefRef
+        | Assign
+    ] = field(
+        default_factory=list,
+        metadata={
+            "type": "Elements",
+            "choices": (
+                {
+                    "name": "ParameterSeparator",
+                    "type": ParameterSeparator,
+                    "namespace": "http://knx.org/xml/project/10",
+                },
+                {
+                    "name": "ParameterRefRef",
+                    "type": ParameterRefRef,
+                    "namespace": "http://knx.org/xml/project/10",
+                },
+                {
+                    "name": "choose",
+                    "type": ComObjectParameterChoose,
+                    "namespace": "http://knx.org/xml/project/10",
+                },
+                {
+                    "name": "BinaryDataRef",
+                    "type": BinaryDataRef,
+                    "namespace": "http://knx.org/xml/project/10",
+                },
+                {
+                    "name": "ComObjectRefRef",
+                    "type": ComObjectRefRef,
+                    "namespace": "http://knx.org/xml/project/10",
+                },
+                {
+                    "name": "Assign",
+                    "type": Assign,
+                    "namespace": "http://knx.org/xml/project/10",
+                },
+            ),
+        },
+    )
+    id: str = field(
+        metadata={
+            "name": "Id",
+            "type": "Attribute",
+        }
+    )
+    name: None | str = field(
+        default=None,
+        metadata={
+            "name": "Name",
+            "type": "Attribute",
+            "max_length": 50,
+        },
+    )
+    text: None | str = field(
+        default=None,
+        metadata={
+            "name": "Text",
+            "type": "Attribute",
+            "max_length": 255,
+        },
+    )
+    access: Access = field(
+        default=Access.READ_WRITE,
+        metadata={
+            "name": "Access",
+            "type": "Attribute",
+        },
+    )
+    help_topic: None | int = field(
+        default=None,
+        metadata={
+            "name": "HelpTopic",
+            "type": "Attribute",
+        },
+    )
+    internal_description: None | str = field(
+        default=None,
+        metadata={
+            "name": "InternalDescription",
+            "type": "Attribute",
+        },
+    )
+    param_ref_id: None | str = field(
+        default=None,
+        metadata={
+            "name": "ParamRefId",
+            "type": "Attribute",
+        },
+    )

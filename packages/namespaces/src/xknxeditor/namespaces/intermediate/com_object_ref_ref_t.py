@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(slots=True, kw_only=True)
+class ComObjectRefRef:
+    """
+    :ivar ref_id: registration-relevant
+    :ivar internal_description:
+    """
+
+    class Meta:
+        name = "ComObjectRefRef_t"
+
+    ref_id: str = field(
+        metadata={
+            "name": "RefId",
+            "type": "Attribute",
+        }
+    )
+    internal_description: None | str = field(
+        default=None,
+        metadata={
+            "name": "InternalDescription",
+            "type": "Attribute",
+        },
+    )

@@ -1,0 +1,1 @@
+"""Editor GUI plugin package."""

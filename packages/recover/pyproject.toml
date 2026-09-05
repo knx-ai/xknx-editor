@@ -1,0 +1,21 @@
+[project]
+name = "xknxeditor-recover"
+version = "0.1.0"
+description = "Reconstruct a KNX project by reading devices back from the bus"
+license = "GPL-2.0-only"
+requires-python = ">=3.13"
+dependencies = [
+    "xknxeditor-namespaces",
+    "xknxeditor-prod",
+    "xknxeditor-catalog",
+    "xknxeditor-proj",
+    "xknxeditor-download",
+    "xknx>=3.20,<4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xknxeditor"]
