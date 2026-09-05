@@ -1,0 +1,20 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+from xknxeditor.namespaces.intermediate.mask_version_t_mask_entries_mask_entry import (
+    MaskVersionMaskEntriesMaskEntry,
+)
+
+
+@dataclass(slots=True, kw_only=True)
+class MaskVersionMaskEntries:
+    class Meta:
+        global_type = False
+
+    mask_entry: list[MaskVersionMaskEntriesMaskEntry] = field(
+        default_factory=list,
+        metadata={
+            "name": "MaskEntry",
+            "type": "Element",
+            "min_occurs": 1,
+        },
+    )

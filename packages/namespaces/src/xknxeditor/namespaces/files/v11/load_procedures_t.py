@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxeditor.namespaces.files.v11.load_procedures_t_load_procedure import (
+    LoadProceduresLoadProcedure,
+)
+
+__NAMESPACE__ = "http://knx.org/xml/project/11"
+
+
+@dataclass(slots=True, kw_only=True)
+class LoadProcedures:
+    """
+    :ivar load_procedure: registration-relevant set
+    """
+
+    class Meta:
+        name = "LoadProcedures_t"
+
+    load_procedure: list[LoadProceduresLoadProcedure] = field(
+        default_factory=list,
+        metadata={
+            "name": "LoadProcedure",
+            "type": "Element",
+            "namespace": "http://knx.org/xml/project/11",
+            "min_occurs": 1,
+        },
+    )

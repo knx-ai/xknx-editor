@@ -1,0 +1,22 @@
+[project]
+name = "xknxeditor-datasecure"
+version = "0.1.0"
+description = "XKNX keyring library"
+license = "GPL-2.0-only"
+requires-python = ">=3.13"
+dependencies = [
+    "xknxeditor-namespaces",
+    "xsdata>=24.0",
+    # cryptography ships no win_arm64 wheel for current releases; 46.0.3 is the newest that does
+    # (cp311-abi3, usable on cp313). Pin it only on native Windows-on-ARM so every other platform keeps
+    # the latest. Without this, uv tries to build cryptography from source on arm64 and fails.
+    "cryptography>=42.0; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xknxeditor"]

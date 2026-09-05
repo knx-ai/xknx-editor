@@ -1,0 +1,47 @@
+[project]
+name = "xknxeditor-gui"
+version = "0.1.0"
+description = "XKNX Editor - KNX project editor"
+license = "GPL-2.0-only"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.18.4",
+    "fastmcp>=3.4.7",
+    "imgui-bundle>=1.92.0",
+    "platformdirs>=4.0",
+    "pypdf>=4.0",
+    "sqlalchemy>=2.0.49",
+    "structlog>=24.0.0",
+    "uvicorn>=0.47",
+    "xknx>=3.18.0",
+    "xknxeditor-catalog",
+    "xknxeditor-download",
+    "xknxeditor-datasecure",
+    "xknxeditor-namespaces",
+    "xknxeditor-prod",
+    "xknxeditor-proj",
+    "xknxeditor-recover",
+]
+
+[project.scripts]
+generate-demo = "editor_gui.scripts.generate_demo:main"
+generate-catalog = "editor_gui.scripts.generate_catalog:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pyright"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/editor_gui"]
+
+[tool.uv.sources]
+xknxeditor-catalog = { workspace = true }
+xknxeditor-download = { workspace = true }
+xknxeditor-datasecure = { workspace = true }
+xknxeditor-namespaces = { workspace = true }
+xknxeditor-prod = { workspace = true }
+xknxeditor-proj = { workspace = true }
+xknxeditor-recover = { workspace = true }

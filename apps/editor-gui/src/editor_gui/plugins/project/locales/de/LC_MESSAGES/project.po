@@ -1,0 +1,1069 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor project 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Devices"
+msgstr "Geräte"
+
+msgid "Configure"
+msgstr "Konfigurieren"
+
+msgid "History"
+msgstr "Verlauf"
+
+msgid "Editor"
+msgstr "Editor"
+
+msgid "Group Addresses"
+msgstr "Gruppenadressen"
+
+msgid "Buildings"
+msgstr "Gebäude"
+
+msgid "Project"
+msgstr "Projekt"
+
+msgid "No buildings/rooms in this project"
+msgstr "Keine Gebäude/Räume in diesem Projekt"
+
+msgid "No project"
+msgstr "Kein Projekt"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Group address style"
+msgstr "Gruppenadress-Darstellung"
+
+msgid "Created by"
+msgstr "Erstellt von"
+
+msgid "Tool version"
+msgstr "Toolversion"
+
+msgid "Schema version"
+msgstr "Schemaversion"
+
+msgid "Last modified"
+msgstr "Zuletzt geändert"
+
+msgid "GUID"
+msgstr "GUID"
+
+msgid "Project ID"
+msgstr "Projekt-ID"
+
+msgid "Original project ID"
+msgstr "Originale Projekt-ID"
+
+msgid "Master data (signed)"
+msgstr "Masterdaten (signiert)"
+
+msgid "Validation file"
+msgstr "Validierungsdatei"
+
+msgid "Project certificate"
+msgstr "Projektzertifikat"
+
+msgid "none"
+msgstr "keine"
+
+msgid "present ({size} bytes)"
+msgstr "vorhanden ({size} Bytes)"
+
+msgid "Order number"
+msgstr "Bestellnummer"
+
+msgid "Description"
+msgstr "Beschreibung"
+
+msgid "Comment"
+msgstr "Kommentar"
+
+msgid "Parameters ({count})"
+msgstr "Parameter ({count})"
+
+msgid "Group Objects ({count})"
+msgstr "Gruppenobjekte ({count})"
+
+msgid "Assigned objects"
+msgstr "Zugewiesene Objekte"
+
+msgid "No devices"
+msgstr "Keine Geräte"
+
+msgid "Individual Address"
+msgstr "Physikalische Adresse"
+
+msgid "Program Device"
+msgstr "Gerät programmieren"
+
+msgid "Test Before Programming"
+msgstr "Test vor Programmierung"
+
+msgid "Program device?"
+msgstr "Gerät programmieren?"
+
+msgid ""
+"This writes to the device at {address} (scope: {scope}) and changes its "
+"configuration. Continue?"
+msgstr ""
+"Hiermit wird das Gerät unter {address} beschrieben (Umfang: {scope}) und "
+"seine Konfiguration geändert. Fortfahren?"
+
+msgid "Download"
+msgstr "Programmieren"
+
+msgid "Full"
+msgstr "Vollständig"
+
+msgid "Application program"
+msgstr "Applikationsprogramm"
+
+msgid "Unload"
+msgstr "Entladen"
+
+msgid "Partial: Parameters"
+msgstr "Partiell: Parameter"
+
+msgid "Partial: Group Communication"
+msgstr "Partiell: Gruppenkommunikation"
+
+msgid "Manufacturer"
+msgstr "Hersteller"
+
+msgid "Application"
+msgstr "Applikation"
+
+msgid "Program Version"
+msgstr "Programmversion"
+
+msgid "Application version"
+msgstr "Applikationsversion"
+
+msgid "Read from device"
+msgstr "Vom Gerät lesen"
+
+msgid "Set an individual address and connect to the bus first"
+msgstr "Zuerst eine physikalische Adresse setzen und mit dem Bus verbinden"
+
+msgid "From device (live)"
+msgstr "Vom Gerät (live)"
+
+msgid "Mask version"
+msgstr "Maskenversion"
+
+msgid "Serial number"
+msgstr "Seriennummer"
+
+msgid "Order info"
+msgstr "Bestellinfo"
+
+msgid "Hardware type"
+msgstr "Hardware-Typ"
+
+msgid "differs from project V{version} — program to apply"
+msgstr "weicht von Projekt V{version} ab — programmieren"
+
+msgid "Filter parameters..."
+msgstr "Parameter filtern..."
+
+msgid "Hardware"
+msgstr "Hardware"
+
+msgid "Firmware"
+msgstr "Firmware"
+
+msgid "Com Flags ({count})"
+msgstr "Kom-Flags ({count})"
+
+msgid "Load Procedures ({count})"
+msgstr "Ladeprozeduren ({count})"
+
+msgid "Preview Memory"
+msgstr "Speichervorschau"
+
+msgid "Memory Preview"
+msgstr "Speichervorschau"
+
+msgid "Programming test result"
+msgstr "Ergebnis des Programmiertests"
+
+msgid "Evaluation failed"
+msgstr "Auswertung fehlgeschlagen"
+
+msgid ""
+"Read-only test: checks that the download function generates the same image "
+"as what is already programmed on the device. Nothing is written to the "
+"device."
+msgstr ""
+"Nur-Lese-Test: Prüft, ob die Downloadfunktion dasselbe Abbild erzeugt wie "
+"das, was bereits auf dem Gerät programmiert ist. Es wird nichts auf das "
+"Gerät geschrieben."
+
+msgid ""
+"Cannot run: no KNX connection. Connect to a gateway (Connection menu) and "
+"make sure the device is reachable at its individual address."
+msgstr ""
+"Nicht möglich: Keine KNX-Verbindung. Verbinden Sie ein Gateway (Menü "
+"Verbindung) und stellen Sie sicher, dass das Gerät unter seiner "
+"physikalischen Adresse erreichbar ist."
+
+msgid "Match: the generated image is identical to what is on the device"
+msgstr ""
+"Übereinstimmung: Das erzeugte Abbild ist identisch mit dem auf dem Gerät"
+
+msgid ""
+"Mismatch: {bytes} byte(s) differ from the device in {locations} location(s)"
+msgstr ""
+"Abweichung: {bytes} Byte(s) unterscheiden sich vom Gerät an {locations} "
+"Stelle(n)"
+
+msgid "{matched} matched, {changed} would change"
+msgstr "{matched} übereinstimmend, {changed} würden geändert"
+
+msgid "Location"
+msgstr "Adresse"
+
+msgid "Size"
+msgstr "Größe"
+
+msgid "Status"
+msgstr "Status"
+
+msgid "Changed"
+msgstr "Geändert"
+
+msgid "match"
+msgstr "Übereinstimmung"
+
+msgid "would change"
+msgstr "würde geändert"
+
+msgid "device-managed"
+msgstr "geräteverwaltet"
+
+msgid ""
+"System byte the device sets itself at runtime (e.g. a download detection "
+"byte reset by the application after a download). A difference here is "
+"expected and does not indicate a bad download."
+msgstr ""
+"System-Byte, das vom Gerät zur Laufzeit selbst gesetzt wird (z. B. ein "
+"Download-Erkennungsbyte, das die Applikation nach einem Download "
+"zurücksetzt). Eine Abweichung hier ist erwartbar und deutet nicht auf einen "
+"fehlerhaften Download hin."
+
+msgid "plus {bytes} device-managed runtime byte(s) (expected, benign)"
+msgstr ""
+"plus {bytes} geräteverwaltete(s) Laufzeit-Byte(s) (erwartet, unbedenklich)"
+
+msgid ""
+"No configured differences: the device already carries this configuration. "
+"The differences below are benign (see notes)."
+msgstr ""
+"Keine konfigurierten Unterschiede: Das Gerät trägt diese Konfiguration "
+"bereits. Die Unterschiede unten sind unbedenklich (siehe Hinweise)."
+
+msgid "sets default"
+msgstr "setzt Standardwert"
+
+msgid ""
+"This byte is written for a neighbouring parameter; the differing bit is not "
+"driven by any active parameter and is only reset to the application default. "
+"The device holds an older value (e.g. from a previous configuration or mode) "
+"that programming will normalise. Benign."
+msgstr ""
+"Dieses Byte wird wegen eines benachbarten Parameters geschrieben; das "
+"abweichende Bit wird von keinem aktiven Parameter gesteuert und nur auf den "
+"Applikations-Standard zurückgesetzt. Das Gerät trägt einen älteren Wert (z. "
+"B. aus einer früheren Konfiguration oder einem anderen Modus), den das "
+"Programmieren normalisiert. Unbedenklich."
+
+msgid ""
+"plus {bytes} byte(s) reset to the application default (the device holds an "
+"older value; benign, will be normalised on programming)"
+msgstr ""
+"plus {bytes} Byte(s), die auf den Applikations-Standard zurückgesetzt werden "
+"(das Gerät trägt einen älteren Wert; unbedenklich, wird beim Programmieren "
+"normalisiert)"
+
+msgid "Export Ist/Soll..."
+msgstr "Export Ist/Soll..."
+
+msgid "Export path:"
+msgstr "Exportpfad:"
+
+msgid "memory {address}"
+msgstr "Speicher {address}"
+
+msgid "object {object} property {property}"
+msgstr "Objekt {object} Eigenschaft {property}"
+
+msgid "Filter devices (name, address)..."
+msgstr "Geräte filtern (Name, Adresse)..."
+
+msgid ""
+"No devices. Open or import a project (File menu), or right-click here to add"
+" an area."
+msgstr ""
+"Keine Geräte. Öffnen oder importieren Sie ein Projekt (Menü Datei) oder "
+"klicken Sie rechts, um einen Bereich hinzuzufügen."
+
+msgid "Filter group addresses (address, name)..."
+msgstr "Gruppenadressen filtern (Adresse, Name)..."
+
+msgid "Filter rooms, devices, functions..."
+msgstr "Räume, Geräte, Funktionen filtern..."
+
+msgid "Area {area}"
+msgstr "Bereich {area}"
+
+msgid "{name} (Area {area})"
+msgstr "{name} (Bereich {area})"
+
+msgid "Line {area}.{line}"
+msgstr "Linie {area}.{line}"
+
+msgid "{name} (Line {area}.{line})"
+msgstr "{name} (Linie {area}.{line})"
+
+msgid "Unassigned ({count})"
+msgstr "Nicht zugewiesen ({count})"
+
+msgid "Add Area"
+msgstr "Bereich hinzufügen"
+
+msgid "Add Line"
+msgstr "Linie hinzufügen"
+
+msgid "Rename"
+msgstr "Umbenennen"
+
+msgid "Delete"
+msgstr "Löschen"
+
+msgid "Copy address"
+msgstr "Adresse kopieren"
+
+msgid "New Area"
+msgstr "Neuer Bereich"
+
+msgid "New Line"
+msgstr "Neue Linie"
+
+msgid "Number"
+msgstr "Nummer"
+
+msgid "Add"
+msgstr "Hinzufügen"
+
+msgid "OK"
+msgstr "OK"
+
+msgid "Save"
+msgstr "Speichern"
+
+msgid "Copy Log"
+msgstr "Log kopieren"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "New group address"
+msgstr "Neue Gruppenadresse"
+
+msgid "Rename group address"
+msgstr "Gruppenadresse umbenennen"
+
+msgid "Set datapoint type"
+msgstr "Datenpunkttyp festlegen"
+
+msgid "Address"
+msgstr "Adresse"
+
+msgid "Datapoint type (e.g. DPST-1-1); empty to clear"
+msgstr "Datenpunkttyp (z. B. DPST-1-1); leer zum Löschen"
+
+msgid "Project: {name}"
+msgstr "Projekt: {name}"
+
+msgid "(unsaved)"
+msgstr "(nicht gespeichert)"
+
+msgid "No history"
+msgstr "Kein Verlauf"
+
+msgid "Restore"
+msgstr "Wiederherstellen"
+
+msgid "Add device: {name}"
+msgstr "Gerät hinzufügen: {name}"
+
+msgid "Remove device: {name}"
+msgstr "Gerät entfernen: {name}"
+
+msgid "Address: {old} -> {new}"
+msgstr "Adresse: {old} -> {new}"
+
+msgid "Name: {old} -> {new}"
+msgstr "Name: {old} -> {new}"
+
+msgid "Parameter: {old} -> {new}"
+msgstr "Parameter: {old} -> {new}"
+
+msgid "DPT: {old} -> {new}"
+msgstr "DPT: {old} -> {new}"
+
+msgid "Flag: {flag} -> {state}"
+msgstr "Flag: {flag} -> {state}"
+
+msgid "Group address {address} created"
+msgstr "Gruppenadresse {address} erstellt"
+
+msgid "Group address {address} removed"
+msgstr "Gruppenadresse {address} entfernt"
+
+msgid "Group address: {old} -> {new}"
+msgstr "Gruppenadresse: {old} -> {new}"
+
+msgid "Com object linked to group address"
+msgstr "Kommunikationsobjekt mit Gruppenadresse verknüpft"
+
+msgid "Com object unlinked from group address"
+msgstr "Kommunikationsobjekt von Gruppenadresse getrennt"
+
+msgid "Area {number} created"
+msgstr "Bereich {number} erstellt"
+
+msgid "Area {number} removed"
+msgstr "Bereich {number} entfernt"
+
+msgid "Area: {old} -> {new}"
+msgstr "Bereich: {old} -> {new}"
+
+msgid "Line {number} created"
+msgstr "Linie {number} erstellt"
+
+msgid "Line {number} removed"
+msgstr "Linie {number} entfernt"
+
+msgid "Line: {old} -> {new}"
+msgstr "Linie: {old} -> {new}"
+
+msgid ""
+"Cannot run: the project was changed since it was opened. This test compares "
+"the generated image against the device's programmed state, which only "
+"matches the project as it was opened. Undo your changes in this session to "
+"test."
+msgstr ""
+"Kann nicht ausgeführt werden: Das Projekt wurde seit dem Öffnen geändert. "
+"Dieser Test vergleicht das erzeugte Abbild mit dem programmierten Zustand "
+"des Geräts, der nur zum Projekt passt, wie es geöffnet wurde. Machen Sie "
+"Ihre Änderungen in dieser Sitzung rückgängig, um zu testen."
+
+msgid "Duplicate"
+msgstr "Duplizieren"
+
+msgid "Apply changes to all {count} identical devices"
+msgstr "Änderungen auf alle {count} baugleichen Geräte anwenden"
+
+msgid ""
+"Editing {count} devices — edits apply to all, diverging values show <differs>"
+msgstr ""
+"{count} Geräte bearbeiten — Änderungen gelten für alle, abweichende Werte "
+"zeigen <unterschiedlich>"
+
+msgid "Mass Linker"
+msgstr "Massenverknüpfung"
+
+msgid "GA <> Object"
+msgstr "GA <> Objekt"
+
+msgid "Object <> Object"
+msgstr "Objekt <> Objekt"
+
+msgid "Log"
+msgstr "Protokoll"
+
+msgid "Open a project to use the Mass Linker."
+msgstr "Öffne ein Projekt, um die Massenverknüpfung zu nutzen."
+
+msgid ""
+"Pairs are matched by list order (1st with 1st, ...). Surplus items on the "
+"longer side are ignored. Reorder a list via its right-click menu."
+msgstr ""
+"Paare werden nach Listenreihenfolge gebildet (1. mit 1. usw.). Überzählige "
+"Einträge der längeren Seite werden ignoriert. Reihenfolge über das "
+"Rechtsklick-Menü ändern."
+
+msgid "Source (objects)"
+msgstr "Quelle (Objekte)"
+
+msgid "Target (group addresses)"
+msgstr "Ziel (Gruppenadressen)"
+
+msgid "Target (objects)"
+msgstr "Ziel (Objekte)"
+
+msgid "Preview & link"
+msgstr "Vorschau & Verknüpfen"
+
+msgid "Add objects..."
+msgstr "Objekte hinzufügen..."
+
+msgid "Add group addresses..."
+msgstr "Gruppenadressen hinzufügen..."
+
+msgid "Add selected"
+msgstr "Auswahl hinzufügen"
+
+msgid "Clear"
+msgstr "Leeren"
+
+msgid "Remove"
+msgstr "Entfernen"
+
+msgid "Move up"
+msgstr "Nach oben"
+
+msgid "Move down"
+msgstr "Nach unten"
+
+msgid "{count} items"
+msgstr "{count} Einträge"
+
+msgid "{count} pairs"
+msgstr "{count} Paare"
+
+msgid "{count} unpaired (ignored)"
+msgstr "{count} ohne Paar (ignoriert)"
+
+msgid "Link"
+msgstr "Verknüpfen"
+
+msgid "GA name ({source}, {target}, {n})"
+msgstr "GA-Name ({source}, {target}, {n})"
+
+msgid "Start address"
+msgstr "Startadresse"
+
+msgid "Filter..."
+msgstr "Filter..."
+
+msgid "Add communication objects"
+msgstr "Kommunikationsobjekte hinzufügen"
+
+msgid "Add group addresses"
+msgstr "Gruppenadressen hinzufügen"
+
+msgid "Linked {count} object(s) to group addresses"
+msgstr "{count} Objekt(e) mit Gruppenadressen verknüpft"
+
+msgid "Linked {count} object pair(s) via new group addresses"
+msgstr "{count} Objektpaar(e) über neue Gruppenadressen verknüpft"
+
+msgid "{count} error(s)"
+msgstr "{count} Fehler"
+
+msgid "Clear all"
+msgstr "Alles löschen"
+
+msgid "No operations yet."
+msgstr "Noch keine Operationen."
+
+msgid "Mass Linker result"
+msgstr "Ergebnis der Massenverknüpfung"
+
+msgid "Tools"
+msgstr "Werkzeuge"
+
+msgid "Open a project to use the tools."
+msgstr "Öffne ein Projekt, um die Werkzeuge zu nutzen."
+
+msgid "No devices in this project."
+msgstr "Keine Geräte in diesem Projekt."
+
+msgid "Extended Copy"
+msgstr "Erweitertes Kopieren"
+
+msgid "Shift Addresses"
+msgstr "Adressen verschieben"
+
+msgid "Labels"
+msgstr "Etiketten"
+
+msgid "Topology Check"
+msgstr "Topologie-Prüfung"
+
+msgid "Source device"
+msgstr "Quellgerät"
+
+msgid "Copies"
+msgstr "Kopien"
+
+msgid "Find in name"
+msgstr "Im Namen suchen"
+
+msgid "Replace with"
+msgstr "Ersetzen durch"
+
+msgid "Create group addresses for each copy"
+msgstr "Gruppenadressen für jede Kopie anlegen"
+
+msgid "Copy name: {name}"
+msgstr "Kopiename: {name}"
+
+msgid "Copy"
+msgstr "Kopieren"
+
+msgid "Created {count} copy/copies"
+msgstr "{count} Kopie(n) erstellt"
+
+msgid ""
+"Shifts the device part of each individual address. Group addresses are not "
+"shifted."
+msgstr ""
+"Verschiebt den Geräteteil jeder physikalischen Adresse. Gruppenadressen "
+"werden nicht verschoben."
+
+msgid "Offset"
+msgstr "Versatz"
+
+msgid "Selected source device only (from Extended Copy)"
+msgstr "Nur ausgewähltes Quellgerät (aus Erweitertes Kopieren)"
+
+msgid "(out of range)"
+msgstr "(außerhalb des Bereichs)"
+
+msgid "Shift addresses"
+msgstr "Adressen verschieben"
+
+msgid "Shifted {count} address(es)"
+msgstr "{count} Adresse(n) verschoben"
+
+msgid "Export {count} device(s) to a CSV for on-site labelling."
+msgstr "{count} Gerät(e) als CSV für die Beschriftung vor Ort exportieren."
+
+msgid "Export CSV..."
+msgstr "CSV exportieren..."
+
+msgid "Exported to {path}"
+msgstr "Exportiert nach {path}"
+
+msgid "No topology issues found."
+msgstr "Keine Topologieprobleme gefunden."
+
+msgid "{count} issue(s)"
+msgstr "{count} Problem(e)"
+
+msgid "{count} address(es) will change"
+msgstr "{count} Adresse(n) werden geändert"
+
+msgid "Click a finding to jump to the device."
+msgstr "Auf einen Befund klicken, um zum Gerät zu springen."
+
+msgid ""
+"Link many communication objects to existing group addresses at once. 1) Add "
+"objects: '+ Selected device' (all objects of the device selected in the "
+"tree) or 'Add objects…'. 2) Set each row's target address in its dropdown — "
+"or fill them fast with 'Assign sequential' (next free addresses from the "
+"given start) or 'Match by name'. 3) 'Link all' links every row that has a "
+"target."
+msgstr ""
+"Viele Kommunikationsobjekte auf einmal mit bestehenden Gruppenadressen "
+"verknüpfen. 1) Objekte hinzufügen: '+ Ausgewähltes Gerät' (alle Objekte des "
+"im Baum ausgewählten Geräts) oder 'Objekte hinzufügen…'. 2) Pro Zeile die "
+"Ziel-Gruppenadresse im Dropdown wählen — oder schnell füllen mit "
+"'Sequentiell zuweisen' (nächste freie Adressen ab dem angegebenen Start) "
+"oder 'Nach Name zuordnen'. 3) 'Alle verknüpfen' verknüpft jede Zeile mit "
+"gesetztem Ziel."
+
+msgid ""
+"Link communication objects to each other. 1) Add the source objects. 2) Pick"
+" a partner object per row. Each pair gets a NEW group address (source sends,"
+" target receives): the address and name are suggested (first free address, "
+"name template below) but can be edited per row. 3) 'Link all' creates and "
+"links them."
+msgstr ""
+"Kommunikationsobjekte miteinander verknüpfen. 1) Quellobjekte hinzufügen. 2)"
+" Pro Zeile ein Partnerobjekt wählen. Jedes Paar bekommt eine NEUE "
+"Gruppenadresse (Quelle sendet, Ziel empfängt): Adresse und Name werden "
+"vorgeschlagen (erste freie Adresse, Namensvorlage unten), sind aber pro Zeile"
+" editierbar. 3) 'Alle verknüpfen' erzeugt und verknüpft."
+
+msgid "Chronological record of every mass-link operation in this session."
+msgstr ""
+"Chronologische Aufzeichnung aller Massenverknüpfungen in dieser Sitzung."
+
+msgid ""
+"Duplicate a device several times. Optionally rewrite the copy name "
+"(find/replace) and create a group address for each of its objects."
+msgstr ""
+"Ein Gerät mehrfach duplizieren. Optional den Kopiennamen umschreiben "
+"(Suchen/Ersetzen) und für jedes Objekt eine Gruppenadresse anlegen."
+
+msgid ""
+"Renumber devices by adding an offset to the device part of their individual "
+"addresses, e.g. to open gaps for new devices. Group addresses are untouched."
+msgstr ""
+"Geräte umnummerieren, indem ein Versatz auf den Geräteteil der "
+"physikalischen Adressen addiert wird, z. B. um Lücken für neue Geräte zu "
+"schaffen. Gruppenadressen bleiben unberührt."
+
+msgid ""
+"Export the device list (address, name, order number, manufacturer, "
+"description) to a CSV you can print as on-site labels."
+msgstr ""
+"Die Geräteliste (Adresse, Name, Bestellnr., Hersteller, Beschreibung) als "
+"CSV exportieren, die als Etiketten vor Ort gedruckt werden kann."
+
+msgid ""
+"Read-only scan: lists devices with a missing, malformed or duplicate "
+"individual address."
+msgstr ""
+"Nur-Lese-Prüfung: listet Geräte mit fehlender, ungültiger oder doppelter "
+"physikalischer Adresse."
+
+msgid "All"
+msgstr "Alle"
+
+msgid "None"
+msgstr "Keine"
+
+msgid "{sel} of {total} selected"
+msgstr "{sel} von {total} ausgewählt"
+
+msgid "Filter devices..."
+msgstr "Geräte filtern..."
+
+msgid "Replace Device"
+msgstr "Gerät ersetzen"
+
+msgid ""
+"Swap a device for another model (a template device already in the project), "
+"keeping its group-address links. Group objects are matched by number and "
+"size; unmatched ones are reported. Parameters are not carried over."
+msgstr ""
+"Ein Gerät durch ein anderes Modell ersetzen (eine Vorlage aus dem Projekt) "
+"und dabei die Gruppenadress-Verknüpfungen behalten. Gruppenobjekte werden "
+"nach Nummer und Größe zugeordnet; nicht zuordenbare werden gemeldet. "
+"Parameter werden nicht übernommen."
+
+msgid "Device to replace"
+msgstr "Zu ersetzendes Gerät"
+
+msgid "Replace with (template)"
+msgstr "Ersetzen durch (Vorlage)"
+
+msgid "Group object mapping (by number)"
+msgstr "Gruppenobjekt-Zuordnung (nach Nummer)"
+
+msgid "{count} object(s) will be re-mapped"
+msgstr "{count} Objekt(e) werden neu zugeordnet"
+
+msgid "Replace device"
+msgstr "Gerät ersetzen"
+
+msgid "Replaced; re-mapped {count} group object(s)"
+msgstr "Ersetzt; {count} Gruppenobjekt(e) neu zugeordnet"
+
+msgid "Device"
+msgstr "Gerät"
+
+msgid "Object"
+msgstr "Objekt"
+
+msgid "DPT"
+msgstr "DPT"
+
+msgid "Target group address"
+msgstr "Ziel-Gruppenadresse"
+
+msgid "Target object"
+msgstr "Zielobjekt"
+
+msgid "Group address"
+msgstr "Gruppenadresse"
+
+msgid "Group address name"
+msgstr "Gruppenadressen-Name"
+
+msgid "(none)"
+msgstr "(keine)"
+
+msgid "+ Selected device"
+msgstr "+ Ausgewähltes Gerät"
+
+msgid "Select all"
+msgstr "Alle auswählen"
+
+msgid "No objects yet — add the selected device or pick objects."
+msgstr ""
+"Noch keine Objekte — ausgewähltes Gerät hinzufügen oder Objekte auswählen."
+
+msgid "From"
+msgstr "Ab"
+
+msgid "Assign sequential"
+msgstr "Sequentiell zuweisen"
+
+msgid "Match by name"
+msgstr "Nach Name zuordnen"
+
+msgid "Link all ({count})"
+msgstr "Alle verknüpfen ({count})"
+
+msgid ""
+"{ready} ready · {amb} ambiguous · {bad} incompatible · {none} unmatched"
+msgstr ""
+"{ready} bereit · {amb} mehrdeutig · {bad} inkompatibel · {none} ungepaart"
+
+msgid "Only problems"
+msgstr "Nur Probleme"
+
+msgid ""
+"Only for ETS 6 devices: this test compares the device against an image "
+"generated the ETS 6 way. A device last programmed with ETS 5 uses a "
+"different byte layout and will show large false differences - the result is "
+"only meaningful for a device last programmed with ETS 6."
+msgstr ""
+"Nur für ETS-6-Geräte: Dieser Test vergleicht das Gerät mit einem Abbild, das "
+"auf ETS-6-Art erzeugt wurde. Ein zuletzt mit ETS 5 programmiertes Gerät hat "
+"ein anderes Byte-Layout und zeigt große falsche Unterschiede - das Ergebnis "
+"ist nur für ein zuletzt mit ETS 6 programmiertes Gerät aussagekräftig."
+
+msgid ""
+"Structural differences (whole tables differ) can mean the device was last "
+"programmed with ETS 5, whose byte layout differs. Differences in values only "
+"usually mean the device holds a different configuration."
+msgstr ""
+"Strukturelle Unterschiede (ganze Tabellen weichen ab) können bedeuten, dass "
+"das Gerät zuletzt mit ETS 5 programmiert wurde, dessen Byte-Layout abweicht. "
+"Reine Wertunterschiede bedeuten meist, dass das Gerät eine andere "
+"Konfiguration hält."
+
+msgid ""
+"Test/Program mirror an ETS 6 programming. If a test reports whole tables as "
+"different, the device was likely last programmed with ETS 5 (different byte "
+"layout)."
+msgstr ""
+"Testen/Programmieren entsprechen einer ETS-6-Programmierung. Meldet ein Test "
+"ganze Tabellen als unterschiedlich, wurde das Gerät wahrscheinlich zuletzt "
+"mit ETS 5 programmiert (anderes Byte-Layout)."
+
+msgid "Product"
+msgstr "Produkt"
+
+msgid "Product ref"
+msgstr "Produkt-Ref"
+
+msgid "Program ref"
+msgstr "Programm-Ref"
+
+msgid "Copied"
+msgstr "Kopiert"
+
+msgid "Click to copy"
+msgstr "Klicken zum Kopieren"
+
+msgid "Available online ({count})"
+msgstr "Online verfügbar ({count})"
+
+msgid "(current)"
+msgstr "(aktuell)"
+
+msgid "Update to V{version}"
+msgstr "Auf V{version} aktualisieren"
+
+msgid "Update application program"
+msgstr "Applikationsprogramm aktualisieren"
+
+msgid ""
+"Update this device to application version V{version}? Parameter values and "
+"group-address links are kept; settings that no longer exist in the new version "
+"are dropped. The newer product is downloaded from the online catalog if needed."
+msgstr ""
+"Dieses Gerät auf Applikationsversion V{version} aktualisieren? Parameterwerte und "
+"Gruppenadress-Verknüpfungen bleiben erhalten; Einstellungen, die es in der neuen "
+"Version nicht mehr gibt, werden verworfen. Das neuere Produkt wird bei Bedarf aus "
+"dem Online-Katalog geladen."
+
+msgid "Updated to V{version}: {kept} settings kept, {dropped} dropped"
+msgstr "Auf V{version} aktualisiert: {kept} Einstellungen übernommen, {dropped} verworfen"
+
+msgid "Application updated"
+msgstr "Applikation aktualisiert"
+
+msgid ""
+"Update to V{version} successful. You can now program the application onto "
+"the device so the change takes effect."
+msgstr ""
+"Aktualisierung auf V{version} erfolgreich. Sie können jetzt die Applikation "
+"aufs Gerät programmieren, damit die Änderung wirksam wird."
+
+msgid "Update failed: no newer version could be resolved"
+msgstr "Aktualisierung fehlgeschlagen: keine neuere Version gefunden"
+
+msgid "+ Function"
+msgstr "+ Funktion"
+
+msgid "New function"
+msgstr "Neue Funktion"
+
+msgid "Type"
+msgstr "Typ"
+
+msgid "Create"
+msgstr "Erstellen"
+
+msgid "Assign group address"
+msgstr "Gruppenadresse zuordnen"
+
+msgid "Role (optional)"
+msgstr "Rolle (optional)"
+
+msgid "Custom"
+msgstr "Benutzerdefiniert"
+
+msgid "Switching (light)"
+msgstr "Schalten (Licht)"
+
+msgid "Dimming (light)"
+msgstr "Dimmen (Licht)"
+
+msgid "Blinds / sun protection"
+msgstr "Jalousie / Sonnenschutz"
+
+msgid "Switchable socket"
+msgstr "Schaltbare Steckdose"
+
+msgid "Confirmed restart"
+msgstr "Bestätigter Neustart"
+
+msgid "Delete application program"
+msgstr "Applikationsprogramm löschen"
+
+msgid "Factory reset"
+msgstr "Werksreset"
+
+msgid "Factory reset (keep address)"
+msgstr "Werksreset (Adresse behalten)"
+
+msgid "I understand this resets the device"
+msgstr "Mir ist bewusst, dass dies das Gerät zurücksetzt"
+
+msgid "Master reset"
+msgstr "Master-Reset"
+
+msgid "Reset device"
+msgstr "Gerät zurücksetzen"
+
+msgid "Reset group address links"
+msgstr "Gruppenadress-Verknüpfungen zurücksetzen"
+
+msgid "Reset individual address"
+msgstr "Physikalische Adresse zurücksetzen"
+
+msgid "Reset parameters"
+msgstr "Parameter zurücksetzen"
+
+msgid "Reset type"
+msgstr "Reset-Typ"
+
+msgid "Reset..."
+msgstr "Zurücksetzen…"
+
+msgid "Restart"
+msgstr "Neustart"
+
+msgid "no fault reported"
+msgstr "kein Fehler gemeldet"
+
+msgid "programming mode active"
+msgstr "Programmiermodus aktiv"
+
+msgid "(top level)"
+msgstr "(oberste Ebene)"
+
+msgid "+ Space"
+msgstr "+ Bereich"
+
+msgid "+ Sub-space"
+msgstr "+ Unterbereich"
+
+msgid "Assign a device to this space"
+msgstr "Ein Gerät diesem Bereich zuordnen"
+
+msgid "Assign device"
+msgstr "Gerät zuordnen"
+
+msgid "Building"
+msgstr "Gebäude"
+
+msgid "Building part"
+msgstr "Gebäudeteil"
+
+msgid "Corridor"
+msgstr "Flur"
+
+msgid "Delete this space and everything in it? Devices are only unassigned, not deleted."
+msgstr "Diesen Bereich und seinen gesamten Inhalt löschen? Geräte werden nur entfernt, nicht gelöscht."
+
+msgid "Distribution board"
+msgstr "Verteiler"
+
+msgid "Floor"
+msgstr "Stockwerk"
+
+msgid "Move to"
+msgstr "Verschieben nach"
+
+msgid "New space"
+msgstr "Neuer Bereich"
+
+msgid "No unassigned devices"
+msgstr "Keine nicht zugeordneten Geräte"
+
+msgid "Remove from space"
+msgstr "Aus Bereich entfernen"
+
+msgid "Room"
+msgstr "Raum"
+
+msgid "Stairway"
+msgstr "Treppenhaus"
+
+msgid "Without space"
+msgstr "Ohne Bereich"
+
+msgid "New main group"
+msgstr "Neue Hauptgruppe"
+
+msgid "New middle group"
+msgstr "Neue Mittelgruppe"
+
+msgid "New folder"
+msgstr "Neuer Ordner"
+
+msgid "Rename folder"
+msgstr "Ordner umbenennen"
+
+msgid "Delete folder"
+msgstr "Ordner löschen"
+
+msgid "Main group name (the next free number is assigned automatically)"
+msgstr "Name der Hauptgruppe (die nächste freie Nummer wird automatisch vergeben)"
+
+msgid "Middle group name (the next free number is assigned automatically)"
+msgstr "Name der Mittelgruppe (die nächste freie Nummer wird automatisch vergeben)"
+
+msgid "Delete this folder and every group address in it? This can be undone."
+msgstr "Diesen Ordner und alle enthaltenen Gruppenadressen löschen? Kann rückgängig gemacht werden."
+
+msgid "Apply changes to all channels"
+msgstr "Änderungen auf alle Kanäle anwenden"

@@ -1,0 +1,1851 @@
+"""Events: each edit's reversible unit, run against a SQLAlchemy ``Session``.
+
+An event changes the relational graph and can undo itself. On first ``apply`` it records every row
+id it creates (the ``if self.x_id is not None`` guard) so a redo reuses those ids and foreign keys
+elsewhere stay valid. ``to_dict``/``from_dict`` round-trip the whole payload — inputs, captured ids,
+and any pre-change values ``revert`` needs — through the ``events`` JSON column, surviving reopen.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
+
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.orm import Session
+
+from xknxeditor.proj.core.skeleton import MEDIUM_IP
+from xknxeditor.proj.models import (
+    Area,
+    Base,
+    ComObject,
+    ComObjectLink,
+    Device,
+    Function,
+    FunctionGroupAddress,
+    GroupAddress,
+    GroupRange,
+    Installation,
+    Line,
+    ModuleInstance,
+    Parameter,
+    Segment,
+    Space,
+)
+
+EVENT_TYPES: dict[str, type[Event]] = {}
+
+
+def _register[E: Event](cls: type[E]) -> type[E]:
+    EVENT_TYPES[cls.event_type] = cls
+    return cls
+
+
+def deserialize_event(event_type: str, data: dict[str, Any]) -> Event:
+    cls = EVENT_TYPES.get(event_type)
+    if cls is None:
+        raise ValueError(f"Unknown event type: {event_type}")
+    return cls.from_dict(data)
+
+
+class Event(ABC):
+    event_type: ClassVar[str]
+
+    @abstractmethod
+    def apply(self, session: Session) -> None: ...
+
+    @abstractmethod
+    def revert(self, session: Session) -> None: ...
+
+    @abstractmethod
+    def to_dict(self) -> dict[str, Any]: ...
+
+    @classmethod
+    @abstractmethod
+    def from_dict(cls, data: dict[str, Any]) -> Event: ...
+
+
+@_register
+@dataclass
+class AddInstallation(Event):
+    event_type: ClassVar[str] = "AddInstallation"
+
+    index: int
+    name: str
+    installation_id: int | None = None
+    area_id: int | None = None
+    line_id: int | None = None
+    segment_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        inst = Installation(index=self.index, name=self.name)
+        if self.installation_id is not None:
+            inst.id = self.installation_id
+        area = Area(address=0, name="")
+        if self.area_id is not None:
+            area.id = self.area_id
+        line = Line(address=0, name="")
+        if self.line_id is not None:
+            line.id = self.line_id
+        segment = Segment(number=0, medium_type=MEDIUM_IP)
+        if self.segment_id is not None:
+            segment.id = self.segment_id
+        line.segments.append(segment)
+        area.lines.append(line)
+        inst.areas.append(area)
+        session.add(inst)
+        session.flush()
+        self.installation_id = inst.id
+        self.area_id = area.id
+        self.line_id = line.id
+        self.segment_id = segment.id
+
+    def revert(self, session: Session) -> None:
+        inst = session.get(Installation, self.installation_id)
+        if inst is not None:
+            session.delete(inst)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "name": self.name,
+            "installation_id": self.installation_id,
+            "area_id": self.area_id,
+            "line_id": self.line_id,
+            "segment_id": self.segment_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AddInstallation:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class CreateArea(Event):
+    event_type: ClassVar[str] = "CreateArea"
+
+    installation_id: int
+    address: int
+    name: str
+    area_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        area = Area(
+            installation_id=self.installation_id, address=self.address, name=self.name
+        )
+        if self.area_id is not None:
+            area.id = self.area_id
+        session.add(area)
+        session.flush()
+        self.area_id = area.id
+
+    def revert(self, session: Session) -> None:
+        area = session.get(Area, self.area_id)
+        if area is not None:
+            session.delete(area)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "installation_id": self.installation_id,
+            "address": self.address,
+            "name": self.name,
+            "area_id": self.area_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateArea:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class CreateLine(Event):
+    event_type: ClassVar[str] = "CreateLine"
+
+    area_id: int
+    address: int
+    name: str
+    medium_type: str
+    line_id: int | None = None
+    segment_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        line = Line(area_id=self.area_id, address=self.address, name=self.name)
+        if self.line_id is not None:
+            line.id = self.line_id
+        segment = Segment(number=0, medium_type=self.medium_type)
+        if self.segment_id is not None:
+            segment.id = self.segment_id
+        line.segments.append(segment)
+        session.add(line)
+        session.flush()
+        self.line_id = line.id
+        self.segment_id = segment.id
+
+    def revert(self, session: Session) -> None:
+        line = session.get(Line, self.line_id)
+        if line is not None:
+            session.delete(line)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "area_id": self.area_id,
+            "address": self.address,
+            "name": self.name,
+            "medium_type": self.medium_type,
+            "line_id": self.line_id,
+            "segment_id": self.segment_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateLine:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class CreateSegment(Event):
+    event_type: ClassVar[str] = "CreateSegment"
+
+    line_id: int
+    number: int
+    medium_type: str
+    name: str
+    segment_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        segment = Segment(
+            line_id=self.line_id,
+            number=self.number,
+            medium_type=self.medium_type,
+            name=self.name,
+        )
+        if self.segment_id is not None:
+            segment.id = self.segment_id
+        session.add(segment)
+        session.flush()
+        self.segment_id = segment.id
+
+    def revert(self, session: Session) -> None:
+        segment = session.get(Segment, self.segment_id)
+        if segment is not None:
+            session.delete(segment)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "line_id": self.line_id,
+            "number": self.number,
+            "medium_type": self.medium_type,
+            "name": self.name,
+            "segment_id": self.segment_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateSegment:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class AddDevice(Event):
+    event_type: ClassVar[str] = "AddDevice"
+
+    segment_id: int
+    address: int | None
+    name: str
+    product_ref_id: str
+    hardware2program_ref_id: str | None
+    parameters: list[list[str]] = field(default_factory=list[list[str]])
+    # [ref_id, channel_id] per row (channel_id optional)
+    com_objects: list[list[str | None]] = field(default_factory=list[list[str | None]])
+    # [instance_id, ref_id] per row, e.g. ["M-100_MI-1", "M-100"]
+    module_instances: list[list[str]] = field(default_factory=list[list[str]])
+    device_id: int | None = None
+    parameter_ids: list[int] = field(default_factory=list[int])
+    com_object_ids: list[int] = field(default_factory=list[int])
+    module_instance_ids: list[int] = field(default_factory=list[int])
+
+    def apply(self, session: Session) -> None:
+        device = Device(
+            segment_id=self.segment_id,
+            address=self.address,
+            name=self.name,
+            product_ref_id=self.product_ref_id,
+            hardware2program_ref_id=self.hardware2program_ref_id,
+        )
+        if self.device_id is not None:
+            device.id = self.device_id
+        for i, (instance_id, ref_id) in enumerate(self.module_instances):
+            mi = ModuleInstance(instance_id=instance_id, ref_id=ref_id)
+            if i < len(self.module_instance_ids):
+                mi.id = self.module_instance_ids[i]
+            device.module_instances.append(mi)
+        for i, (ref_id, value) in enumerate(self.parameters):
+            param = Parameter(ref_id=ref_id, value=value)
+            if i < len(self.parameter_ids):
+                param.id = self.parameter_ids[i]
+            device.parameters.append(param)
+        for i, (ref_id, channel_id) in enumerate(self.com_objects):
+            assert ref_id is not None
+            com_object = ComObject(ref_id=ref_id, channel_id=channel_id)
+            if i < len(self.com_object_ids):
+                com_object.id = self.com_object_ids[i]
+            device.com_objects.append(com_object)
+        session.add(device)
+        session.flush()
+        self.device_id = device.id
+        self.module_instance_ids = [mi.id for mi in device.module_instances]
+        self.parameter_ids = [p.id for p in device.parameters]
+        self.com_object_ids = [c.id for c in device.com_objects]
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None:
+            session.delete(device)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "segment_id": self.segment_id,
+            "address": self.address,
+            "name": self.name,
+            "product_ref_id": self.product_ref_id,
+            "hardware2program_ref_id": self.hardware2program_ref_id,
+            "parameters": self.parameters,
+            "com_objects": self.com_objects,
+            "module_instances": self.module_instances,
+            "device_id": self.device_id,
+            "parameter_ids": self.parameter_ids,
+            "com_object_ids": self.com_object_ids,
+            "module_instance_ids": self.module_instance_ids,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AddDevice:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class UpdateDeviceApplication(Event):
+    """Update a device to a newer version of the *same* application program, keeping parameter
+    values and group-address links (like "Update Application Program").
+
+    Repoints the device's ``product_ref_id``/``hardware2program_ref_id`` to the new version and
+    re-prefixes every ``Parameter``/``ComObject`` ``ref_id`` from ``old_app_id`` to ``new_app_id``.
+    A row whose re-prefixed ref does not exist in the new application (``valid_ref_ids``) is dropped
+    (its ``ComObjectLink`` rows cascade). Rows that are not application-id-prefixed (module-instance
+    parameters, foreign refs) are left untouched. Links of carried com-objects are preserved because
+    they hang off ``com_object_id``, which does not change.
+    """
+
+    event_type: ClassVar[str] = "UpdateDeviceApplication"
+
+    device_id: int
+    new_product_ref_id: str
+    new_hardware2program_ref_id: str | None
+    old_app_id: str
+    new_app_id: str
+    valid_ref_ids: list[str]
+    # Optional display columns to refresh from the new product (empty/None = leave unchanged).
+    new_order_number: str | None = None
+    new_hardware_name: str | None = None
+    new_product_name: str | None = None
+    new_manufacturer_name: str | None = None
+    new_description: str | None = None
+    # Captured on apply for revert.
+    old_product_ref_id: str | None = None
+    old_hardware2program_ref_id: str | None = None
+    old_display: dict[str, str] | None = None
+    renamed: list[list[str]] = field(default_factory=list[list[str]])
+    deleted_params: list[list[Any]] = field(default_factory=list[list[Any]])
+    deleted_com_objects: list[dict[str, Any]] = field(
+        default_factory=list[dict[str, Any]]
+    )
+
+    _CO_FLAGS: ClassVar[tuple[str, ...]] = (
+        "read_flag",
+        "write_flag",
+        "communication_flag",
+        "transmit_flag",
+        "update_flag",
+        "read_on_init_flag",
+    )
+    _DISPLAY_COLS: ClassVar[tuple[str, ...]] = (
+        "order_number",
+        "hardware_name",
+        "product_name",
+        "manufacturer_name",
+        "description",
+    )
+
+    def _remap(self, ref: str, valid: set[str]) -> str | None:
+        """New ref if the row should be kept, ``None`` if it should be dropped."""
+        if not ref.startswith(self.old_app_id):
+            return ref  # not application-prefixed -> carry unchanged
+        candidate = self.new_app_id + ref[len(self.old_app_id) :]
+        return candidate if candidate in valid else None
+
+    def _snapshot_co(self, co: ComObject) -> dict[str, Any]:
+        snap: dict[str, Any] = {
+            "id": co.id,
+            "ref_id": co.ref_id,
+            "channel_id": co.channel_id,
+            "links": [
+                [link.id, link.group_address_id, link.is_sending] for link in co.links
+            ],
+        }
+        for flag in self._CO_FLAGS:
+            snap[flag] = getattr(co, flag)
+        return snap
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is None:
+            return
+        valid = set(self.valid_ref_ids)
+
+        self.old_product_ref_id = device.product_ref_id
+        self.old_hardware2program_ref_id = device.hardware2program_ref_id
+        device.product_ref_id = self.new_product_ref_id
+        device.hardware2program_ref_id = self.new_hardware2program_ref_id
+
+        self.old_display = {col: getattr(device, col) for col in self._DISPLAY_COLS}
+        new_display = {
+            "order_number": self.new_order_number,
+            "hardware_name": self.new_hardware_name,
+            "product_name": self.new_product_name,
+            "manufacturer_name": self.new_manufacturer_name,
+            "description": self.new_description,
+        }
+        for col, value in new_display.items():
+            if value:
+                setattr(device, col, value)
+
+        self.renamed = []
+        self.deleted_params = []
+        self.deleted_com_objects = []
+
+        for param in list(device.parameters):
+            new_ref = self._remap(param.ref_id, valid)
+            if new_ref is None:
+                self.deleted_params.append([param.id, param.ref_id, param.value])
+                session.delete(param)
+            elif new_ref != param.ref_id:
+                self.renamed.append(["P", str(param.id), param.ref_id, new_ref])
+                param.ref_id = new_ref
+
+        for co in list(device.com_objects):
+            new_ref = self._remap(co.ref_id, valid)
+            if new_ref is None:
+                self.deleted_com_objects.append(self._snapshot_co(co))
+                session.delete(co)
+            elif new_ref != co.ref_id:
+                self.renamed.append(["O", str(co.id), co.ref_id, new_ref])
+                co.ref_id = new_ref
+        session.flush()
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is None:
+            return
+        if self.old_product_ref_id is not None:
+            device.product_ref_id = self.old_product_ref_id
+        device.hardware2program_ref_id = self.old_hardware2program_ref_id
+        if self.old_display is not None:
+            for col, value in self.old_display.items():
+                setattr(device, col, value)
+
+        for kind, row_id, old_ref, _new_ref in self.renamed:
+            row = (
+                session.get(Parameter, int(row_id))
+                if kind == "P"
+                else session.get(ComObject, int(row_id))
+            )
+            if row is not None:
+                row.ref_id = old_ref
+
+        for pid, ref_id, value in self.deleted_params:
+            param = Parameter(device_id=self.device_id, ref_id=ref_id, value=value)
+            param.id = pid
+            session.add(param)
+
+        for snap in self.deleted_com_objects:
+            co = ComObject(
+                device_id=self.device_id,
+                ref_id=snap["ref_id"],
+                channel_id=snap["channel_id"],
+            )
+            co.id = snap["id"]
+            for flag in self._CO_FLAGS:
+                setattr(co, flag, snap[flag])
+            session.add(co)
+            session.flush()
+            for lid, ga_id, is_sending in snap["links"]:
+                link = ComObjectLink(
+                    com_object_id=co.id,
+                    group_address_id=ga_id,
+                    is_sending=is_sending,
+                )
+                link.id = lid
+                session.add(link)
+        session.flush()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "new_product_ref_id": self.new_product_ref_id,
+            "new_hardware2program_ref_id": self.new_hardware2program_ref_id,
+            "old_app_id": self.old_app_id,
+            "new_app_id": self.new_app_id,
+            "valid_ref_ids": self.valid_ref_ids,
+            "new_order_number": self.new_order_number,
+            "new_hardware_name": self.new_hardware_name,
+            "new_product_name": self.new_product_name,
+            "new_manufacturer_name": self.new_manufacturer_name,
+            "new_description": self.new_description,
+            "old_product_ref_id": self.old_product_ref_id,
+            "old_hardware2program_ref_id": self.old_hardware2program_ref_id,
+            "old_display": self.old_display,
+            "renamed": self.renamed,
+            "deleted_params": self.deleted_params,
+            "deleted_com_objects": self.deleted_com_objects,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UpdateDeviceApplication:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SyncDeviceComObjects(Event):
+    """Reconcile a device's com-object rows to a target set of ``[ref_id, channel_id]`` — the
+    parameter-driven "should exist" set after a structure-driving parameter change. Adds rows for new
+    refs (default/inherited flags), removes rows whose ref is no longer wanted (their links cascade),
+    and leaves survivors untouched (flags + links preserved). Reversible: added rows are dropped and
+    removed rows re-created with their original ids, flags and links (mirrors UpdateDeviceApplication).
+    """
+
+    event_type: ClassVar[str] = "SyncDeviceComObjects"
+
+    device_id: int
+    target: list[list[str | None]] = field(default_factory=list[list[str | None]])
+    added_ids: list[int] = field(default_factory=list[int])
+    removed: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+    def _snapshot_co(self, co: ComObject) -> dict[str, Any]:
+        snap: dict[str, Any] = {
+            "id": co.id,
+            "ref_id": co.ref_id,
+            "channel_id": co.channel_id,
+            "links": [
+                [link.id, link.group_address_id, link.is_sending] for link in co.links
+            ],
+        }
+        for flag in COM_OBJECT_FLAGS:
+            snap[flag] = getattr(co, flag)
+        return snap
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is None:
+            return
+        target_refs = {row[0] for row in self.target}
+        existing = {co.ref_id for co in device.com_objects}
+
+        self.removed = []
+        for co in list(device.com_objects):
+            if co.ref_id not in target_refs:
+                self.removed.append(self._snapshot_co(co))
+                session.delete(co)
+        session.flush()
+
+        to_add = [row for row in self.target if row[0] not in existing]
+        new_cos: list[ComObject] = []
+        for i, row in enumerate(to_add):
+            ref_id, channel_id = row[0], (row[1] if len(row) > 1 else None)
+            co = ComObject(
+                device_id=self.device_id, ref_id=ref_id, channel_id=channel_id
+            )
+            if i < len(self.added_ids):
+                co.id = self.added_ids[i]
+            session.add(co)
+            new_cos.append(co)
+        session.flush()
+        if not self.added_ids:
+            self.added_ids = [co.id for co in new_cos]
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is None:
+            return
+        for cid in self.added_ids:
+            co = session.get(ComObject, cid)
+            if co is not None:
+                session.delete(co)  # links cascade
+        session.flush()
+        for snap in self.removed:
+            co = ComObject(
+                device_id=self.device_id,
+                ref_id=snap["ref_id"],
+                channel_id=snap["channel_id"],
+            )
+            co.id = snap["id"]
+            for flag in COM_OBJECT_FLAGS:
+                setattr(co, flag, snap[flag])
+            session.add(co)
+            session.flush()
+            for lid, ga_id, is_sending in snap["links"]:
+                link = ComObjectLink(
+                    com_object_id=co.id,
+                    group_address_id=ga_id,
+                    is_sending=is_sending,
+                )
+                link.id = lid
+                session.add(link)
+        session.flush()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "target": self.target,
+            "added_ids": self.added_ids,
+            "removed": self.removed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SyncDeviceComObjects:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetParameter(Event):
+    event_type: ClassVar[str] = "SetParameter"
+
+    device_id: int
+    ref_id: str
+    value: str
+    existed: bool | None = None
+    old_value: str | None = None
+    parameter_id: int | None = None
+
+    def _find(self, session: Session) -> Parameter | None:
+        return (
+            session.query(Parameter)
+            .filter_by(device_id=self.device_id, ref_id=self.ref_id)
+            .first()
+        )
+
+    def apply(self, session: Session) -> None:
+        param = self._find(session)
+        if param is not None:
+            self.existed = True
+            self.old_value = param.value
+            param.value = self.value
+        else:
+            self.existed = False
+            param = Parameter(
+                device_id=self.device_id, ref_id=self.ref_id, value=self.value
+            )
+            if self.parameter_id is not None:
+                param.id = self.parameter_id
+            session.add(param)
+            session.flush()
+            self.parameter_id = param.id
+
+    def revert(self, session: Session) -> None:
+        if self.existed:
+            param = self._find(session)
+            if param is not None and self.old_value is not None:
+                param.value = self.old_value
+        else:
+            param = session.get(Parameter, self.parameter_id)
+            if param is not None:
+                session.delete(param)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "ref_id": self.ref_id,
+            "value": self.value,
+            "existed": self.existed,
+            "old_value": self.old_value,
+            "parameter_id": self.parameter_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetParameter:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class CompositeEvent(Event):
+    """A group of sub-events applied and reverted as a single undo step.
+
+    Used when one user action must persist several events atomically — e.g. changing a structure
+    parameter (:class:`SetParameter`) plus the com-object re-instantiation it triggers
+    (:class:`SyncDeviceComObjects`) — so one undo/redo reverts/re-applies the whole action instead of
+    leaving an inconsistent half-state. Sub-events apply in order and revert in reverse; each captures
+    its own reversal state on apply (so re-serialising after apply persists it for reopen)."""
+
+    event_type: ClassVar[str] = "Composite"
+
+    events: list[Event] = field(default_factory=list[Event])
+
+    def apply(self, session: Session) -> None:
+        for event in self.events:
+            event.apply(session)
+
+    def revert(self, session: Session) -> None:
+        for event in reversed(self.events):
+            event.revert(session)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "events": [
+                {"type": event.event_type, "data": event.to_dict()}
+                for event in self.events
+            ]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CompositeEvent:
+        return cls(
+            events=[
+                deserialize_event(sub["type"], sub["data"]) for sub in data["events"]
+            ]
+        )
+
+
+@_register
+@dataclass
+class CreateGroupAddress(Event):
+    """Insert a group address, creating any missing containing ranges, as a single undoable step.
+
+    ``levels`` is the ``[range_start, range_end, name]`` chain (top → leaf) for the project style —
+    see :func:`xknxeditor.proj.core.addressing.ranges_for`. ``range_ids`` and ``created``, filled
+    on apply, hold each level's id and whether this event made it, so revert drops only what it added
+    and redo rebuilds with identical ids."""
+
+    event_type: ClassVar[str] = "CreateGroupAddress"
+
+    installation_id: int
+    address: int
+    name: str
+    levels: list[list[Any]] = field(default_factory=list[list[Any]])
+    range_ids: list[int] = field(default_factory=list[int])
+    created: list[bool] = field(default_factory=list[bool])
+    ga_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        parent_id: int | None = None
+        range_ids: list[int] = []
+        created: list[bool] = []
+        for i, (start, end, range_name) in enumerate(self.levels):
+            existing = (
+                session.query(GroupRange)
+                .filter_by(
+                    installation_id=self.installation_id,
+                    parent_id=parent_id,
+                    range_start=start,
+                )
+                .first()
+            )
+            if existing is None:
+                group_range = GroupRange(
+                    installation_id=self.installation_id,
+                    parent_id=parent_id,
+                    range_start=start,
+                    range_end=end,
+                    name=range_name,
+                )
+                if i < len(self.range_ids):
+                    group_range.id = self.range_ids[i]
+                session.add(group_range)
+                session.flush()
+                created.append(True)
+            else:
+                group_range = existing
+                created.append(False)
+            range_ids.append(group_range.id)
+            parent_id = group_range.id
+        self.range_ids = range_ids
+        self.created = created
+
+        ga = GroupAddress(
+            group_range_id=parent_id, address=self.address, name=self.name
+        )
+        if self.ga_id is not None:
+            ga.id = self.ga_id
+        session.add(ga)
+        session.flush()
+        self.ga_id = ga.id
+
+    def revert(self, session: Session) -> None:
+        # Remove the topmost range this event created (cascade takes the deeper ones and the group
+        # address); if none were created, delete just the group address.
+        first_created = next((i for i, made in enumerate(self.created) if made), None)
+        if first_created is not None:
+            target = session.get(GroupRange, self.range_ids[first_created])
+        else:
+            target = session.get(GroupAddress, self.ga_id)
+        if target is not None:
+            session.delete(target)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "installation_id": self.installation_id,
+            "address": self.address,
+            "name": self.name,
+            "levels": self.levels,
+            "range_ids": self.range_ids,
+            "created": self.created,
+            "ga_id": self.ga_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateGroupAddress:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class LinkComObject(Event):
+    event_type: ClassVar[str] = "LinkComObject"
+
+    com_object_id: int
+    group_address_id: int
+    is_sending: bool = False
+    link_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        link = ComObjectLink(
+            com_object_id=self.com_object_id,
+            group_address_id=self.group_address_id,
+            is_sending=self.is_sending,
+        )
+        if self.link_id is not None:
+            link.id = self.link_id
+        session.add(link)
+        session.flush()
+        self.link_id = link.id
+
+    def revert(self, session: Session) -> None:
+        link = session.get(ComObjectLink, self.link_id)
+        if link is not None:
+            session.delete(link)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "com_object_id": self.com_object_id,
+            "group_address_id": self.group_address_id,
+            "is_sending": self.is_sending,
+            "link_id": self.link_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LinkComObject:
+        return cls(**data)
+
+
+COM_OBJECT_FLAGS = frozenset(
+    {
+        "read_flag",
+        "write_flag",
+        "communication_flag",
+        "transmit_flag",
+        "update_flag",
+        "read_on_init_flag",
+    }
+)
+
+
+@_register
+@dataclass
+class SetComObjectFlag(Event):
+    """Force a com-object flag: ``True``/``False`` overrides it, ``None`` falls back to the product
+    default."""
+
+    event_type: ClassVar[str] = "SetComObjectFlag"
+
+    com_object_id: int
+    flag: str
+    value: bool | None
+    captured: bool = False
+    old: bool | None = None
+
+    def apply(self, session: Session) -> None:
+        com_object = session.get(ComObject, self.com_object_id)
+        if com_object is not None:
+            self.old = getattr(com_object, self.flag)
+            self.captured = True
+            setattr(com_object, self.flag, self.value)
+
+    def revert(self, session: Session) -> None:
+        com_object = session.get(ComObject, self.com_object_id)
+        if com_object is not None and self.captured:
+            setattr(com_object, self.flag, self.old)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "com_object_id": self.com_object_id,
+            "flag": self.flag,
+            "value": self.value,
+            "captured": self.captured,
+            "old": self.old,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetComObjectFlag:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetGroupAddressDatapointType(Event):
+    event_type: ClassVar[str] = "SetGroupAddressDatapointType"
+
+    group_address_id: int
+    datapoint_type: str | None
+    captured: bool = False
+    old: str | None = None
+
+    def apply(self, session: Session) -> None:
+        ga = session.get(GroupAddress, self.group_address_id)
+        if ga is not None:
+            self.old = ga.datapoint_type
+            self.captured = True
+            ga.datapoint_type = self.datapoint_type
+
+    def revert(self, session: Session) -> None:
+        ga = session.get(GroupAddress, self.group_address_id)
+        if ga is not None and self.captured:
+            ga.datapoint_type = self.old
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_address_id": self.group_address_id,
+            "datapoint_type": self.datapoint_type,
+            "captured": self.captured,
+            "old": self.old,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetGroupAddressDatapointType:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RenameGroupAddress(Event):
+    event_type: ClassVar[str] = "RenameGroupAddress"
+
+    group_address_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        ga = session.get(GroupAddress, self.group_address_id)
+        if ga is not None:
+            self.old_name = ga.name
+            ga.name = self.name
+
+    def revert(self, session: Session) -> None:
+        ga = session.get(GroupAddress, self.group_address_id)
+        if ga is not None and self.old_name is not None:
+            ga.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_address_id": self.group_address_id,
+            "name": self.name,
+            "old_name": self.old_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RenameGroupAddress:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetComObjectSending(Event):
+    """Mark one link as sending and clear the bit on the com-object's other links (at most one
+    sends). ``previous`` stores each sibling's earlier bit for revert."""
+
+    event_type: ClassVar[str] = "SetComObjectSending"
+
+    link_id: int
+    captured: bool = False
+    previous: dict[str, bool] = field(default_factory=dict[str, bool])
+
+    def apply(self, session: Session) -> None:
+        link = session.get(ComObjectLink, self.link_id)
+        if link is None:
+            return
+        siblings = (
+            session.query(ComObjectLink)
+            .filter_by(com_object_id=link.com_object_id)
+            .all()
+        )
+        self.previous = {str(s.id): s.is_sending for s in siblings}
+        self.captured = True
+        for sibling in siblings:
+            sibling.is_sending = sibling.id == self.link_id
+
+    def revert(self, session: Session) -> None:
+        if not self.captured:
+            return
+        for sibling_id, was_sending in self.previous.items():
+            sibling = session.get(ComObjectLink, int(sibling_id))
+            if sibling is not None:
+                sibling.is_sending = was_sending
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "link_id": self.link_id,
+            "captured": self.captured,
+            "previous": self.previous,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetComObjectSending:
+        return cls(**data)
+
+
+# --- reversible deletes (snapshot subtree on delete, re-insert on revert) ----------
+
+
+@dataclass
+class _SubtreeDelete(Event):
+    """Delete a row plus its cascade-owned descendants, snapshotting them first so revert can
+    re-insert with the original ids and keep external foreign keys valid."""
+
+    _model: ClassVar[type[Base]]
+
+    target_id: int
+    rows: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+
+    def apply(self, session: Session) -> None:
+        obj = session.get(self._model, self.target_id)
+        if obj is not None:
+            self.rows = _snapshot_subtree(obj)
+            session.delete(obj)
+
+    def revert(self, session: Session) -> None:
+        _restore_rows(session, self.rows)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"target_id": self.target_id, "rows": self.rows}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> _SubtreeDelete:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RemoveDevice(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveDevice"
+    _model: ClassVar[type[Base]] = Device
+
+
+@_register
+@dataclass
+class RemoveArea(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveArea"
+    _model: ClassVar[type[Base]] = Area
+
+
+@_register
+@dataclass
+class RemoveLine(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveLine"
+    _model: ClassVar[type[Base]] = Line
+
+
+@_register
+@dataclass
+class RemoveSegment(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveSegment"
+    _model: ClassVar[type[Base]] = Segment
+
+
+@_register
+@dataclass
+class RemoveGroupAddress(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveGroupAddress"
+    _model: ClassVar[type[Base]] = GroupAddress
+
+
+@_register
+@dataclass
+class UnlinkComObject(_SubtreeDelete):
+    event_type: ClassVar[str] = "UnlinkComObject"
+    _model: ClassVar[type[Base]] = ComObjectLink
+
+
+# --- field changes (stash the prior value, put it back on revert) --------------
+
+
+@_register
+@dataclass
+class RenameArea(Event):
+    event_type: ClassVar[str] = "RenameArea"
+
+    area_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        area = session.get(Area, self.area_id)
+        if area is not None:
+            self.old_name = area.name
+            area.name = self.name
+
+    def revert(self, session: Session) -> None:
+        area = session.get(Area, self.area_id)
+        if area is not None and self.old_name is not None:
+            area.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"area_id": self.area_id, "name": self.name, "old_name": self.old_name}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RenameArea:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RenameLine(Event):
+    event_type: ClassVar[str] = "RenameLine"
+
+    line_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        line = session.get(Line, self.line_id)
+        if line is not None:
+            self.old_name = line.name
+            line.name = self.name
+
+    def revert(self, session: Session) -> None:
+        line = session.get(Line, self.line_id)
+        if line is not None and self.old_name is not None:
+            line.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"line_id": self.line_id, "name": self.name, "old_name": self.old_name}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RenameLine:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetDeviceName(Event):
+    event_type: ClassVar[str] = "SetDeviceName"
+
+    device_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None:
+            self.old_name = device.name
+            device.name = self.name
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None and self.old_name is not None:
+            device.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "name": self.name,
+            "old_name": self.old_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetDeviceName:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class MoveDevice(Event):
+    """Relocate a device to a different segment and/or set a new individual-address octet."""
+
+    event_type: ClassVar[str] = "MoveDevice"
+
+    device_id: int
+    segment_id: int
+    address: int | None
+    old_segment_id: int | None = None
+    old_address: int | None = None
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None:
+            self.old_segment_id = device.segment_id
+            self.old_address = device.address
+            device.segment_id = self.segment_id
+            device.address = self.address
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None and self.old_segment_id is not None:
+            device.segment_id = self.old_segment_id
+            device.address = self.old_address
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "segment_id": self.segment_id,
+            "address": self.address,
+            "old_segment_id": self.old_segment_id,
+            "old_address": self.old_address,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MoveDevice:
+        return cls(**data)
+
+
+# --- subtree snapshot/restore helpers -------------------------------------------------
+
+_MODELS: dict[str, type[Base]] = {
+    m.__name__: m
+    for m in (
+        Installation,
+        Area,
+        Line,
+        Segment,
+        Device,
+        ModuleInstance,
+        Parameter,
+        ComObject,
+        GroupRange,
+        GroupAddress,
+        ComObjectLink,
+        Function,
+        FunctionGroupAddress,
+        Space,
+    )
+}
+
+
+def _row_to_dict(obj: Base) -> dict[str, Any]:
+    mapper = sa_inspect(type(obj))
+    data: dict[str, Any] = {"__model__": type(obj).__name__}
+    for column in mapper.columns:
+        data[column.name] = getattr(obj, column.name)
+    return data
+
+
+def _snapshot_subtree(obj: Base) -> list[dict[str, Any]]:
+    """Snapshot ``obj`` and all cascade-owned descendants, parents first so restore order is safe."""
+    rows = [_row_to_dict(obj)]
+    mapper = sa_inspect(type(obj))
+    for rel in mapper.relationships:
+        if rel.direction.name == "ONETOMANY" and rel.cascade.delete_orphan:
+            for child in getattr(obj, rel.key):
+                rows.extend(_snapshot_subtree(child))
+    return rows
+
+
+def _restore_rows(session: Session, rows: list[dict[str, Any]]) -> None:
+    for data in rows:
+        payload = dict(data)
+        model = _MODELS[payload.pop("__model__")]
+        session.add(model(**payload))
+    session.flush()
+
+
+# --- building functions (Function + its group-address roles) ------------------
+
+
+@_register
+@dataclass
+class CreateFunction(Event):
+    """Add a building function (a named grouping of group addresses by role) to a space."""
+
+    event_type: ClassVar[str] = "CreateFunction"
+
+    space_id: int
+    function_type: str
+    name: str
+    order: int = 0
+    function_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        fn = Function(
+            space_id=self.space_id,
+            function_type=self.function_type,
+            name=self.name,
+            order=self.order,
+        )
+        if self.function_id is not None:
+            fn.id = self.function_id
+        session.add(fn)
+        session.flush()
+        self.function_id = fn.id
+
+    def revert(self, session: Session) -> None:
+        fn = session.get(Function, self.function_id)
+        if fn is not None:
+            session.delete(fn)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "space_id": self.space_id,
+            "function_type": self.function_type,
+            "name": self.name,
+            "order": self.order,
+            "function_id": self.function_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateFunction:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RemoveFunction(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveFunction"
+    _model: ClassVar[type[Base]] = Function
+
+
+@_register
+@dataclass
+class RenameFunction(Event):
+    event_type: ClassVar[str] = "RenameFunction"
+
+    function_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        fn = session.get(Function, self.function_id)
+        if fn is not None:
+            self.old_name = fn.name
+            fn.name = self.name
+
+    def revert(self, session: Session) -> None:
+        fn = session.get(Function, self.function_id)
+        if fn is not None and self.old_name is not None:
+            fn.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "function_id": self.function_id,
+            "name": self.name,
+            "old_name": self.old_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RenameFunction:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetFunctionType(Event):
+    event_type: ClassVar[str] = "SetFunctionType"
+
+    function_id: int
+    function_type: str
+    old_type: str | None = None
+
+    def apply(self, session: Session) -> None:
+        fn = session.get(Function, self.function_id)
+        if fn is not None:
+            self.old_type = fn.function_type
+            fn.function_type = self.function_type
+
+    def revert(self, session: Session) -> None:
+        fn = session.get(Function, self.function_id)
+        if fn is not None and self.old_type is not None:
+            fn.function_type = self.old_type
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "function_id": self.function_id,
+            "function_type": self.function_type,
+            "old_type": self.old_type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetFunctionType:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class AddFunctionGroupAddress(Event):
+    """Assign a group address to a function under a role (empty role = unassigned)."""
+
+    event_type: ClassVar[str] = "AddFunctionGroupAddress"
+
+    function_id: int
+    group_address_id: int
+    role: str = ""
+    link_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        link = FunctionGroupAddress(
+            function_id=self.function_id,
+            group_address_id=self.group_address_id,
+            role=self.role,
+        )
+        if self.link_id is not None:
+            link.id = self.link_id
+        session.add(link)
+        session.flush()
+        self.link_id = link.id
+
+    def revert(self, session: Session) -> None:
+        link = session.get(FunctionGroupAddress, self.link_id)
+        if link is not None:
+            session.delete(link)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "function_id": self.function_id,
+            "group_address_id": self.group_address_id,
+            "role": self.role,
+            "link_id": self.link_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AddFunctionGroupAddress:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RemoveFunctionGroupAddress(_SubtreeDelete):
+    event_type: ClassVar[str] = "RemoveFunctionGroupAddress"
+    _model: ClassVar[type[Base]] = FunctionGroupAddress
+
+
+# --- building spaces (location tree: building / floor / room / …) -------------
+
+
+@_register
+@dataclass
+class CreateSpace(Event):
+    """Add a node to the building/location tree (a building, floor, room, …). ``parent_id`` is
+    ``None`` for a top-level space."""
+
+    event_type: ClassVar[str] = "CreateSpace"
+
+    installation_id: int
+    space_type: str
+    name: str
+    parent_id: int | None = None
+    number: str = ""
+    order: int = 0
+    space_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        space = Space(
+            installation_id=self.installation_id,
+            parent_id=self.parent_id,
+            space_type=self.space_type,
+            name=self.name,
+            number=self.number,
+            order=self.order,
+        )
+        if self.space_id is not None:
+            space.id = self.space_id
+        session.add(space)
+        session.flush()
+        self.space_id = space.id
+
+    def revert(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None:
+            session.delete(space)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "installation_id": self.installation_id,
+            "space_type": self.space_type,
+            "name": self.name,
+            "parent_id": self.parent_id,
+            "number": self.number,
+            "order": self.order,
+            "space_id": self.space_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateSpace:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RenameSpace(Event):
+    event_type: ClassVar[str] = "RenameSpace"
+
+    space_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None:
+            self.old_name = space.name
+            space.name = self.name
+
+    def revert(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None and self.old_name is not None:
+            space.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "space_id": self.space_id,
+            "name": self.name,
+            "old_name": self.old_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RenameSpace:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetSpaceType(Event):
+    event_type: ClassVar[str] = "SetSpaceType"
+
+    space_id: int
+    space_type: str
+    old_type: str | None = None
+
+    def apply(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None:
+            self.old_type = space.space_type
+            space.space_type = self.space_type
+
+    def revert(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None and self.old_type is not None:
+            space.space_type = self.old_type
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "space_id": self.space_id,
+            "space_type": self.space_type,
+            "old_type": self.old_type,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetSpaceType:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class MoveSpace(Event):
+    """Re-parent a space (``new_parent_id`` ``None`` = move to top level). The caller guards against
+    cycles; this only records the move so it can be reverted."""
+
+    event_type: ClassVar[str] = "MoveSpace"
+
+    space_id: int
+    new_parent_id: int | None
+    old_parent_id: int | None = None
+    _had_old: bool = False
+
+    def apply(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None:
+            self.old_parent_id = space.parent_id
+            self._had_old = True
+            space.parent_id = self.new_parent_id
+
+    def revert(self, session: Session) -> None:
+        space = session.get(Space, self.space_id)
+        if space is not None and self._had_old:
+            space.parent_id = self.old_parent_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "space_id": self.space_id,
+            "new_parent_id": self.new_parent_id,
+            "old_parent_id": self.old_parent_id,
+            "_had_old": self._had_old,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MoveSpace:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class SetDeviceSpace(Event):
+    """Assign a device to a space (room), or unassign it (``space_id`` ``None``)."""
+
+    event_type: ClassVar[str] = "SetDeviceSpace"
+
+    device_id: int
+    space_id: int | None
+    old_space_id: int | None = None
+    _had_old: bool = False
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None:
+            self.old_space_id = device.space_id
+            self._had_old = True
+            device.space_id = self.space_id
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None and self._had_old:
+            device.space_id = self.old_space_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "space_id": self.space_id,
+            "old_space_id": self.old_space_id,
+            "_had_old": self._had_old,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetDeviceSpace:
+        return cls(**data)
+
+
+_COMMISSIONING_FIELDS = (
+    "serial_number",
+    "last_download",
+    "individual_address_loaded",
+    "application_program_loaded",
+    "communication_part_loaded",
+    "medium_config_loaded",
+    "parameters_loaded",
+)
+
+
+@_register
+@dataclass
+class SetDeviceCommissioning(Event):
+    """Update a device's commissioning state ("loaded" ticks + serial / last download).
+
+    Each field is optional; ``None`` leaves it unchanged (so e.g. programming can set only the
+    flags for its scope). The previous values of the changed fields are captured for undo.
+    """
+
+    event_type: ClassVar[str] = "SetDeviceCommissioning"
+
+    device_id: int
+    serial_number: str | None = None
+    last_download: str | None = None
+    individual_address_loaded: bool | None = None
+    application_program_loaded: bool | None = None
+    communication_part_loaded: bool | None = None
+    medium_config_loaded: bool | None = None
+    parameters_loaded: bool | None = None
+    _old: dict[str, Any] = field(default_factory=dict[str, Any])
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is None:
+            return
+        self._old = {}
+        for name in _COMMISSIONING_FIELDS:
+            new = getattr(self, name)
+            if new is not None:
+                self._old[name] = getattr(device, name)
+                setattr(device, name, new)
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is None:
+            return
+        for name, old in self._old.items():
+            setattr(device, name, old)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            **{name: getattr(self, name) for name in _COMMISSIONING_FIELDS},
+            "_old": self._old,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetDeviceCommissioning:
+        return cls(**data)
+
+
+def _devices_in_subtree(space: Space) -> list[Device]:
+    """Every device assigned to ``space`` or any space below it (used to snapshot/restore
+    device→space assignments when a space subtree is deleted)."""
+    devices = list(space.devices)
+    for child in space.children:
+        devices.extend(_devices_in_subtree(child))
+    return devices
+
+
+@_register
+@dataclass
+class RemoveSpace(_SubtreeDelete):
+    """Delete a space and its cascade-owned children/functions. Devices are NOT owned by a space
+    (deleting a space only unassigns them), so their ``space_id`` is captured and restored on revert
+    — otherwise undo would re-create the spaces but leave the devices orphaned."""
+
+    event_type: ClassVar[str] = "RemoveSpace"
+    _model: ClassVar[type[Base]] = Space
+
+    device_space: dict[int, int] = field(default_factory=dict[int, int])
+
+    def apply(self, session: Session) -> None:
+        space = session.get(Space, self.target_id)
+        if space is None:
+            return
+        # Capture each device's original space before the delete nulls the foreign key.
+        self.device_space = {
+            d.id: d.space_id
+            for d in _devices_in_subtree(space)
+            if d.space_id is not None
+        }
+        for device in _devices_in_subtree(space):
+            device.space_id = None
+        session.flush()
+        self.rows = _snapshot_subtree(space)
+        session.delete(space)
+
+    def revert(self, session: Session) -> None:
+        _restore_rows(session, self.rows)
+        for device_id, space_id in self.device_space.items():
+            device = session.get(Device, device_id)
+            if device is not None:
+                device.space_id = space_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_id": self.target_id,
+            "rows": self.rows,
+            "device_space": self.device_space,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RemoveSpace:
+        payload = dict(data)
+        # JSON object keys are strings; device ids must round-trip back to int.
+        raw: dict[Any, int] = payload.get("device_space") or {}
+        payload["device_space"] = {int(k): v for k, v in raw.items()}
+        return cls(**payload)
+
+
+# --- group-address folders (GroupRange: main / middle groups) ------------------
+
+
+@_register
+@dataclass
+class CreateGroupRange(Event):
+    """Add an (initially empty) group-range folder — a main or middle group. ``range_start`` /
+    ``range_end`` define its address span (derived by the service from the next free number for the
+    project's style); ``parent_id`` is ``None`` for a main group, the main group's id for a middle
+    group."""
+
+    event_type: ClassVar[str] = "CreateGroupRange"
+
+    installation_id: int
+    range_start: int
+    range_end: int
+    name: str
+    parent_id: int | None = None
+    range_id: int | None = None
+
+    def apply(self, session: Session) -> None:
+        group_range = GroupRange(
+            installation_id=self.installation_id,
+            parent_id=self.parent_id,
+            range_start=self.range_start,
+            range_end=self.range_end,
+            name=self.name,
+        )
+        if self.range_id is not None:
+            group_range.id = self.range_id
+        session.add(group_range)
+        session.flush()
+        self.range_id = group_range.id
+
+    def revert(self, session: Session) -> None:
+        group_range = session.get(GroupRange, self.range_id)
+        if group_range is not None:
+            session.delete(group_range)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "installation_id": self.installation_id,
+            "range_start": self.range_start,
+            "range_end": self.range_end,
+            "name": self.name,
+            "parent_id": self.parent_id,
+            "range_id": self.range_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CreateGroupRange:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RenameGroupRange(Event):
+    event_type: ClassVar[str] = "RenameGroupRange"
+
+    range_id: int
+    name: str
+    old_name: str | None = None
+
+    def apply(self, session: Session) -> None:
+        group_range = session.get(GroupRange, self.range_id)
+        if group_range is not None:
+            self.old_name = group_range.name
+            group_range.name = self.name
+
+    def revert(self, session: Session) -> None:
+        group_range = session.get(GroupRange, self.range_id)
+        if group_range is not None and self.old_name is not None:
+            group_range.name = self.old_name
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "range_id": self.range_id,
+            "name": self.name,
+            "old_name": self.old_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RenameGroupRange:
+        return cls(**data)
+
+
+@_register
+@dataclass
+class RemoveGroupRange(_SubtreeDelete):
+    """Delete a group-range folder and everything it owns (child ranges, the group addresses in it,
+    and their com-object/function links — all cascade-owned, so the snapshot restores them on undo)."""
+
+    event_type: ClassVar[str] = "RemoveGroupRange"
+    _model: ClassVar[type[Base]] = GroupRange

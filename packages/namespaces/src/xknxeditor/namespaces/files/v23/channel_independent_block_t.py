@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxeditor.namespaces.files.v23.binary_data_ref_t import BinaryDataRef
+from xknxeditor.namespaces.files.v23.channel_choose_t import (
+    ChannelChoose,
+    ComObjectParameterBlock,
+    Repeat,
+)
+from xknxeditor.namespaces.files.v23.com_object_ref_ref_t import ComObjectRefRef
+from xknxeditor.namespaces.files.v23.module_t import Module
+
+__NAMESPACE__ = "http://knx.org/xml/project/23"
+
+
+@dataclass(slots=True, kw_only=True)
+class ChannelIndependentBlock:
+    class Meta:
+        name = "ChannelIndependentBlock_t"
+
+    choice: list[
+        ComObjectParameterBlock
+        | ChannelChoose
+        | BinaryDataRef
+        | ComObjectRefRef
+        | Module
+        | Repeat
+    ] = field(
+        default_factory=list,
+        metadata={
+            "type": "Elements",
+            "choices": (
+                {
+                    "name": "ParameterBlock",
+                    "type": ComObjectParameterBlock,
+                    "namespace": "http://knx.org/xml/project/23",
+                },
+                {
+                    "name": "choose",
+                    "type": ChannelChoose,
+                    "namespace": "http://knx.org/xml/project/23",
+                },
+                {
+                    "name": "BinaryDataRef",
+                    "type": BinaryDataRef,
+                    "namespace": "http://knx.org/xml/project/23",
+                },
+                {
+                    "name": "ComObjectRefRef",
+                    "type": ComObjectRefRef,
+                    "namespace": "http://knx.org/xml/project/23",
+                },
+                {
+                    "name": "Module",
+                    "type": Module,
+                    "namespace": "http://knx.org/xml/project/23",
+                },
+                {
+                    "name": "Repeat",
+                    "type": Repeat,
+                    "namespace": "http://knx.org/xml/project/23",
+                },
+            ),
+        },
+    )

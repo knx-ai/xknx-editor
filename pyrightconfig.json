@@ -1,0 +1,18 @@
+{
+  "include": [
+    "packages/catalog/src",
+    "packages/download/src",
+    "packages/datasecure/src",
+    "packages/namespaces/src",
+    "packages/prod/src",
+    "packages/proj/src",
+    "packages/recover/src"
+  ],
+  "exclude": [
+    "**/files",
+    "**/intermediate"
+  ],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": false
+}

@@ -1,0 +1,50 @@
+[project]
+name = "xknxeditor-monorepo"
+version = "0.1.0"
+description = "XKNX Editor monorepo"
+license = "GPL-2.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "xknxeditor-namespaces",
+    "xknxeditor-prod",
+    "xknxeditor-proj",
+    "xknxeditor-datasecure",
+    "xknxeditor-catalog",
+    "xknxeditor-download",
+    "xknxeditor-recover",
+    # The GUI app is a workspace member too; depend on it so a plain `uv sync` installs the whole
+    # thing (incl. imgui-bundle) — testpaths runs its tests, so `uv sync` must provide its deps.
+    "xknxeditor-gui",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "pyright>=1.1",
+    "structlog>=24.0.0",  # injected logger type for xknxeditor-namespaces converter; no runtime dep there
+    "xmlschema>=3.0",  # validate exported .knxproj XML against the bundled KNX project XSD
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "apps"]
+asyncio_mode = "auto"
+
+[tool.uv.workspace]
+members = ["packages/*", "apps/*"]
+
+[tool.uv.sources]
+xknxeditor-namespaces = { workspace = true }
+xknxeditor-prod = { workspace = true }
+xknxeditor-proj = { workspace = true }
+xknxeditor-datasecure = { workspace = true }
+xknxeditor-gui = { workspace = true }
+xknxeditor-catalog = { workspace = true }
+xknxeditor-download = { workspace = true }
+xknxeditor-recover = { workspace = true }
+# Keep-link-less-com-objects (PR #634) is merged on upstream main but not yet in a
+# PyPI release; pin to the merge commit until a release >= 3.11 ships, then drop this.
+xknxproject = { git = "https://github.com/XKNX/xknxproject", rev = "b16ba8b70ac23082a847c386fbd85862b8a12661" }

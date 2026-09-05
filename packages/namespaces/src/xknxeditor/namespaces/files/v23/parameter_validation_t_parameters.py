@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxeditor.namespaces.files.v23.calculation_parameter_ref_t import (
+    CalculationParameterRef,
+)
+
+__NAMESPACE__ = "http://knx.org/xml/project/23"
+
+
+@dataclass(slots=True, kw_only=True)
+class ParameterValidationParameters:
+    """
+    :ivar parameter_ref_ref: registration-relevant set
+    """
+
+    class Meta:
+        global_type = False
+
+    parameter_ref_ref: list[CalculationParameterRef] = field(
+        default_factory=list,
+        metadata={
+            "name": "ParameterRefRef",
+            "type": "Element",
+            "namespace": "http://knx.org/xml/project/23",
+            "min_occurs": 1,
+        },
+    )

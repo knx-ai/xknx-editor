@@ -1,0 +1,50 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor keyring 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "XKNX Secure"
+msgstr "XKNX Secure"
+
+msgid "Show window"
+msgstr "Fenster anzeigen"
+
+msgid "No keyring loaded"
+msgstr "Kein Schlüsselbund geladen"
+
+msgid "Import keyring…"
+msgstr "Schlüsselbund importieren…"
+
+msgid "KNX keyring (*.knxkeys)"
+msgstr "KNX-Schlüsselbund (*.knxkeys)"
+
+msgid "All files"
+msgstr "Alle Dateien"
+
+msgid "Load"
+msgstr "Laden"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "Close"
+msgstr "Schließen"
+
+msgid "{project} — created by {by}"
+msgstr "{project} — erstellt von {by}"
+
+msgid "Backbone"
+msgstr "Backbone"
+
+msgid "Interfaces ({count})"
+msgstr "Schnittstellen ({count})"
+
+msgid "Group address keys ({count})"
+msgstr "Gruppenadress-Schlüssel ({count})"
+
+msgid "Devices ({count})"
+msgstr "Geräte ({count})"

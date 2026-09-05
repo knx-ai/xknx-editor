@@ -1,0 +1,71 @@
+# Dutch translations for catalog plugin
+msgid ""
+msgstr ""
+"Language: nl\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Catalog"
+msgstr "Catalogus"
+
+msgid "Failed to load archive"
+msgstr "Archief laden mislukt"
+
+msgid "Loaded: {path}"
+msgstr "Geladen: {path}"
+
+msgid "Found {count} application(s)"
+msgstr "{count} applicatie(s) gevonden"
+
+msgid "({count} com objects)"
+msgstr "({count} com objecten)"
+
+msgid "Online Catalog"
+msgstr "Onlinecatalogus"
+
+msgid "Loading manufacturer list..."
+msgstr "Fabrikantenlijst laden..."
+
+msgid "Online catalog not reachable"
+msgstr "Onlinecatalogus niet bereikbaar"
+
+msgid "{count} manufacturers"
+msgstr "{count} fabrikanten"
+
+msgid "Program version"
+msgstr "Programmaversie"
+
+msgid "Search products, order number..."
+msgstr "Producten, bestelnummer zoeken..."
+
+msgid "Product index: {mfrs} manufacturers, {products} products"
+msgstr "Productindex: {mfrs} fabrikanten, {products} producten"
+
+msgid "No product index yet - fetch the online catalog to build it"
+msgstr "Nog geen productindex - haal de online catalogus op om te bouwen"
+
+msgid "Building product index... {done}/{total} manufacturers"
+msgstr "Productindex bouwen... {done}/{total} fabrikanten"
+
+msgid "Cancel"
+msgstr "Annuleren"
+
+msgid "Fetch the online catalog to search across all manufacturers."
+msgstr "Haal de online catalogus op om over alle fabrikanten te zoeken."
+
+msgid "Showing {shown} of {total} matches - refine the search"
+msgstr "{shown} van {total} resultaten - verfijn de zoekopdracht"
+
+msgid "(in local catalog)"
+msgstr "(in lokale catalogus)"
+
+msgid "{count} matches"
+msgstr "{count} resultaten"
+
+msgid "Open or create a project first to add a device."
+msgstr "Open of maak eerst een project om een apparaat toe te voegen."
+
+msgid "This product has no usable application program."
+msgstr "Dit product heeft geen bruikbaar applicatieprogramma."
+
+msgid "Added device: {name}"
+msgstr "Apparaat toegevoegd: {name}"

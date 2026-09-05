@@ -1,0 +1,130 @@
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: xknx-editor catalog 1.0\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Catalog"
+msgstr "Katalog"
+
+msgid "Failed to load archive"
+msgstr "Archiv konnte nicht geladen werden"
+
+msgid "Loaded: {path}"
+msgstr "Geladen: {path}"
+
+msgid "Found {count} application(s)"
+msgstr "{count} Applikation(en) gefunden"
+
+msgid "({count} com objects)"
+msgstr "({count} Kommunikationsobjekte)"
+
+msgid "Fetch online catalog"
+msgstr "Online-Katalog abrufen"
+
+msgid "Loading manufacturer list..."
+msgstr "Herstellerliste wird geladen..."
+
+msgid "Online catalog not reachable"
+msgstr "Online-Katalog nicht erreichbar"
+
+msgid "{count} manufacturers"
+msgstr "{count} Hersteller"
+
+msgid "Loading products..."
+msgstr "Produkte werden geladen..."
+
+msgid "No downloadable products"
+msgstr "Keine herunterladbaren Produkte"
+
+msgid "Downloading {name}..."
+msgstr "{name} wird heruntergeladen..."
+
+msgid "(plugin required)"
+msgstr "(Plugin erforderlich)"
+
+msgid "Search manufacturers..."
+msgstr "Hersteller suchen..."
+
+msgid "Country"
+msgstr "Land"
+
+msgid "Product details"
+msgstr "Produktdetails"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Order number"
+msgstr "Bestellnummer"
+
+msgid "Manufacturer"
+msgstr "Hersteller"
+
+msgid "Application"
+msgstr "Applikation"
+
+msgid "Product ref"
+msgstr "Produktreferenz"
+
+msgid "Add device"
+msgstr "Gerät hinzufügen"
+
+msgid "Fetch {count} missing application(s) online"
+msgstr "{count} fehlende Applikation(en) online abrufen"
+
+msgid "Fetching missing applications…"
+msgstr "Fehlende Applikationen werden abgerufen…"
+
+msgid "Local"
+msgstr "Lokal"
+
+msgid "Online"
+msgstr "Online"
+
+msgid "No products imported yet — import a .knxprod or use the Online tab."
+msgstr ""
+"Noch keine Produkte importiert — importieren Sie eine .knxprod oder nutzen "
+"Sie den Online-Tab."
+
+msgid "Program version"
+msgstr "Programmversion"
+
+msgid "Search products, order number..."
+msgstr "Produkte, Bestellnummer suchen..."
+
+msgid "Product index: {mfrs} manufacturers, {products} products"
+msgstr "Produktindex: {mfrs} Hersteller, {products} Produkte"
+
+msgid "No product index yet - fetch the online catalog to build it"
+msgstr "Noch kein Produktindex - Online-Katalog abrufen zum Aufbauen"
+
+msgid "Building product index... {done}/{total} manufacturers"
+msgstr "Baue Produktindex... {done}/{total} Hersteller"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "Fetch the online catalog to search across all manufacturers."
+msgstr "Online-Katalog abrufen, um über alle Hersteller zu suchen."
+
+msgid "Showing {shown} of {total} matches - refine the search"
+msgstr "Zeige {shown} von {total} Treffern - Suche verfeinern"
+
+msgid "(in local catalog)"
+msgstr "(im lokalen Katalog)"
+
+msgid "{count} matches"
+msgstr "{count} Treffer"
+
+msgid "Open or create a project first to add a device."
+msgstr "Zuerst ein Projekt öffnen oder anlegen, um ein Gerät hinzuzufügen."
+
+msgid "This product has no usable application program."
+msgstr "Dieses Produkt hat kein verwendbares Applikationsprogramm."
+
+msgid "Added device: {name}"
+msgstr "Gerät hinzugefügt: {name}"

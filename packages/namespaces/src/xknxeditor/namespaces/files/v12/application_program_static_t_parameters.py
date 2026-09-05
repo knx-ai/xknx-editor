@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxeditor.namespaces.files.v12.application_program_static_t_parameters_parameter import (
+    ApplicationProgramStaticParametersParameter,
+)
+from xknxeditor.namespaces.files.v12.application_program_static_t_parameters_union import (
+    ApplicationProgramStaticParametersUnion,
+)
+
+__NAMESPACE__ = "http://knx.org/xml/project/12"
+
+
+@dataclass(slots=True, kw_only=True)
+class ApplicationProgramStaticParameters:
+    class Meta:
+        global_type = False
+
+    choice: list[
+        ApplicationProgramStaticParametersParameter
+        | ApplicationProgramStaticParametersUnion
+    ] = field(
+        default_factory=list,
+        metadata={
+            "type": "Elements",
+            "choices": (
+                {
+                    "name": "Parameter",
+                    "type": ApplicationProgramStaticParametersParameter,
+                    "namespace": "http://knx.org/xml/project/12",
+                },
+                {
+                    "name": "Union",
+                    "type": ApplicationProgramStaticParametersUnion,
+                    "namespace": "http://knx.org/xml/project/12",
+                },
+            ),
+        },
+    )

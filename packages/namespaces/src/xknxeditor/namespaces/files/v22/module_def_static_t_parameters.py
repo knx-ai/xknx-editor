@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from xknxeditor.namespaces.files.v22.module_def_static_t_parameters_parameter import (
+    ModuleDefStaticParametersParameter,
+)
+from xknxeditor.namespaces.files.v22.module_def_static_t_parameters_union import (
+    ModuleDefStaticParametersUnion,
+)
+
+__NAMESPACE__ = "http://knx.org/xml/project/22"
+
+
+@dataclass(slots=True, kw_only=True)
+class ModuleDefStaticParameters:
+    class Meta:
+        global_type = False
+
+    choice: list[
+        ModuleDefStaticParametersParameter | ModuleDefStaticParametersUnion
+    ] = field(
+        default_factory=list,
+        metadata={
+            "type": "Elements",
+            "choices": (
+                {
+                    "name": "Parameter",
+                    "type": ModuleDefStaticParametersParameter,
+                    "namespace": "http://knx.org/xml/project/22",
+                },
+                {
+                    "name": "Union",
+                    "type": ModuleDefStaticParametersUnion,
+                    "namespace": "http://knx.org/xml/project/22",
+                },
+            ),
+        },
+    )
