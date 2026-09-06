@@ -90,17 +90,33 @@ def project_hash(folder_signature: bytes) -> str:
     return hashlib.sha256(folder_signature).hexdigest()
 
 
+def _redact_url(url: str) -> str:
+    """Return ``url`` with its query string replaced by a placeholder.
+
+    ``/user/login`` carries the user's MyKnx username and password as query parameters (see
+    :meth:`MyKnxSession.login`), and the editor captures this module's DEBUG records into its in-app
+    log panel — which offers a copy-everything button that ignores the level filter. Logging the raw
+    URL would therefore put the account password one click away from a pasted bug report.
+
+    No query string on any of these endpoints carries information worth logging, so drop them all
+    rather than maintain a list of parameter names to hide.
+    """
+    base, sep, _query = url.partition("?")
+    return f"{base}?<redacted>" if sep else base
+
+
 def _post(
     url: str, body: bytes, headers: dict[str, str], timeout: float
 ) -> tuple[int, dict[str, str], bytes]:
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-    logger.debug("myknx POST %s (%d bytes)", url, len(body))
+    safe_url = _redact_url(url)
+    logger.debug("myknx POST %s (%d bytes)", safe_url, len(body))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            logger.debug("myknx POST %s -> %d", url, r.status)
+            logger.debug("myknx POST %s -> %d", safe_url, r.status)
             return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
     except urllib.error.HTTPError as e:
-        logger.debug("myknx POST %s -> HTTPError %d", url, e.code)
+        logger.debug("myknx POST %s -> HTTPError %d", safe_url, e.code)
         return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, e.read()
 
 
@@ -108,13 +124,14 @@ def _get(
     url: str, headers: dict[str, str], timeout: float
 ) -> tuple[int, dict[str, str], bytes]:
     req = urllib.request.Request(url, headers=headers, method="GET")
-    logger.debug("myknx GET %s", url)
+    safe_url = _redact_url(url)
+    logger.debug("myknx GET %s", safe_url)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            logger.debug("myknx GET %s -> %d", url, r.status)
+            logger.debug("myknx GET %s -> %d", safe_url, r.status)
             return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
     except urllib.error.HTTPError as e:
-        logger.debug("myknx GET %s -> HTTPError %d", url, e.code)
+        logger.debug("myknx GET %s -> HTTPError %d", safe_url, e.code)
         return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, e.read()
 
 
@@ -156,6 +173,10 @@ class MyKnxSession:
         Returns 200 "Login successful" with ``x-session-id`` + ``x-next-ot-token`` headers, which
         this stores for subsequent requests. Note: openapi.knx.org uses this username/password
         login directly (the OAuth device-code flow at id.knx.org is for my.knx.org, not this API).
+
+        The credentials travel as query parameters because that is what the API accepts. That keeps
+        them out of our logs only because :func:`_redact_url` strips the query before logging — they
+        are still visible to anything that records request lines server-side.
         """
         import urllib.parse
 

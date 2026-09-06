@@ -7,10 +7,19 @@ concise, actionable ``user_message`` (for the UI), not an opaque ``bytes`` repr.
 
 from __future__ import annotations
 
+import logging
+import urllib.request
+from typing import Any, ClassVar
+
 import pytest
 
 from xknxeditor.proj.core import myknx_cert
-from xknxeditor.proj.core.myknx_cert import MyKnxError, MyKnxSession, _server_detail
+from xknxeditor.proj.core.myknx_cert import (
+    MyKnxError,
+    MyKnxSession,
+    _redact_url,
+    _server_detail,
+)
 
 _CLOUD_422 = (
     b'"Cannot add product to workset:\\nEncryption \\"cloud\\" is not enabled for '
@@ -48,3 +57,59 @@ def test_cloud_disabled_license_raises_actionable_error(
     assert "KNX Specifications" in err.detail  # raw server text kept for logs
     assert "dongle" in err.user_message.lower()  # points the user at the workaround
     assert "\\n" not in err.user_message  # newlines flattened for a one-line toast
+
+
+# --- credentials must never reach the log ---------------------------------------------------
+
+
+def test_redact_url_drops_the_query() -> None:
+    assert (
+        _redact_url("https://openapi.knx.org/v1/user/login?username=u&password=p")
+        == "https://openapi.knx.org/v1/user/login?<redacted>"
+    )
+    # No query string -> unchanged, so ordinary endpoints stay readable in the log.
+    assert (
+        _redact_url("https://openapi.knx.org/v1/product/getAll")
+        == "https://openapi.knx.org/v1/product/getAll"
+    )
+
+
+class _FakeResponse:
+    status = 200
+    headers: ClassVar[dict[str, str]] = {
+        "x-session-id": "S1",
+        "x-next-ot-token": "T1",
+    }
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return b"Login successful"
+
+
+def test_login_does_not_log_the_password(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The editor captures this logger at DEBUG and can copy the whole log to the clipboard, so a
+    logged password would travel straight into a pasted bug report."""
+
+    def _fake_urlopen(req: Any, timeout: float = 0.0) -> _FakeResponse:
+        assert (
+            "password=hunter2" in req.full_url
+        )  # still sent on the wire, as the API requires
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+
+    with caplog.at_level(logging.DEBUG, logger="xknxeditor.proj.core.myknx_cert"):
+        MyKnxSession(access_token="").login("user@example.com", "hunter2")
+
+    captured = "\n".join(r.getMessage() for r in caplog.records)
+    assert captured, "expected the request to be logged at DEBUG"
+    assert "hunter2" not in captured
+    assert "user@example.com" not in captured
+    assert "?<redacted>" in captured
