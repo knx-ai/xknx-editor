@@ -6,7 +6,9 @@ current working directory. Not for project data — that lives in the ``.xknx`` 
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -59,10 +61,22 @@ def load_settings(name: str) -> dict[str, Any]:
 
 
 def save_settings(name: str, data: dict[str, Any]) -> None:
-    """Write ``data`` to ``<config_dir>/<name>.json`` (best effort; failures are ignored)."""
+    """Write ``data`` to ``<config_dir>/<name>.json``, readable only by the user.
+
+    Best effort; failures are ignored. ``mcp.json`` holds the MCP server's bearer token, which under
+    the default umask would otherwise be written world-readable (``-rw-r--r--``). The mode is set at
+    creation rather than with a ``chmod`` afterwards, so the content is never briefly readable by
+    other local users.
+    """
     path = config_dir() / f"{name}.json"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2))
+        # O_CREAT only applies the mode to a *new* file, so tighten settings written before this
+        # (an existing mcp.json still holds the token under the old permissions).
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
     except OSError:
         pass
