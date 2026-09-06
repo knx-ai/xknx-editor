@@ -893,6 +893,73 @@ class ProjectService:
         )
         return [self._space_device_info(d) for d in devices]
 
+    def coupler_pass_through(
+        self, project_id: str, coupler_address: int
+    ) -> tuple[list[int], list[int]]:
+        """The pass-through group addresses for the coupler at raw ``coupler_address``.
+
+        Returns ``(unfiltered, additional)`` as raw 16-bit group-address values, ready for
+        :func:`xknxeditor.download.filter_table.compute_coupler_filter_table`. Without these a
+        computed filter table blocks addresses the project says must always cross the coupler.
+
+        - ``unfiltered`` - addresses flagged ``Unfiltered`` (KNX PR #651), either on the address
+          itself or on any group range that contains it. The flag is inherited down the range tree:
+          marking a range unfiltered is how a whole span (e.g. central functions) is passed through,
+          so a child range or address inside it inherits it.
+        - ``additional`` - the ``AdditionalGroupAddresses`` configured on the coupler's own line.
+          A coupler at ``a.l.0`` is the coupler of line ``l`` in area ``a``, which is where the KNX
+          schema carries this list (an area/backbone coupler ``a.0.0`` is line 0 of its area, so the
+          same lookup applies).
+        """
+        state = self._state(project_id)
+        session = state.session
+
+        unfiltered_ranges = {
+            row.id: row.parent_id
+            for row in session.query(GroupRange).all()
+            if row.unfiltered
+        }
+        parents = {row.id: row.parent_id for row in session.query(GroupRange).all()}
+
+        def _range_unfiltered(range_id: int | None) -> bool:
+            seen: set[int] = set()
+            while range_id is not None and range_id not in seen:
+                if range_id in unfiltered_ranges:
+                    return True
+                seen.add(range_id)  # a malformed cycle must not hang the download
+                range_id = parents.get(range_id)
+            return False
+
+        unfiltered = sorted(
+            {
+                ga.address
+                for ga in session.query(GroupAddress).all()
+                if ga.unfiltered or _range_unfiltered(ga.group_range_id)
+            }
+        )
+
+        area_address = (coupler_address >> 12) & 0xF
+        line_address = (coupler_address >> 8) & 0xF
+        line = (
+            session.query(Line)
+            .join(Area, Line.area_id == Area.id)
+            .filter(Area.address == area_address, Line.address == line_address)
+            .one_or_none()
+        )
+        additional: set[int] = set()
+        if line is not None:
+            for raw in line.additional_group_addresses.split(","):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    value = int(raw)
+                except ValueError:  # hand-edited project data must not break a download
+                    continue
+                if 0 <= value <= 0xFFFF:
+                    additional.add(value)
+        return unfiltered, sorted(additional)
+
     def group_address(self, project_id: str, group_address_id: int) -> GroupAddressInfo:
         state = self._state(project_id)
         ga = state.session.get(GroupAddress, group_address_id)

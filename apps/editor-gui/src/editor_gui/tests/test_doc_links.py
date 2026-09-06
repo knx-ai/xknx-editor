@@ -90,20 +90,37 @@ def test_resolve_falls_back_to_duckduckgo_site_search(monkeypatch: Any) -> None:
 
 def test_rank_classifies_documents() -> None:
     # KNX config docs (application description OR technical manual) rank best (0)
-    assert doc_links._rank("https://steinel.de/knxappl/KNX_Applikationsbeschreibung.pdf") == 0
+    assert (
+        doc_links._rank("https://steinel.de/knxappl/KNX_Applikationsbeschreibung.pdf")
+        == 0
+    )
     assert doc_links._rank("https://www.mdt.de/download/MDT_THB_AKD.pdf") == 0
     # a general operation manual / other PDF ranks 1, a datasheet ranks 2 (worst)
-    assert doc_links._rank("https://www.steinel.de/out/media/operationmanual/BDAL.pdf") == 1
-    assert doc_links._rank("https://cdn.mdt-group.com/x/AKD-0424R-02_MDT_DS_DE.PDF") == 2
+    assert (
+        doc_links._rank("https://www.steinel.de/out/media/operationmanual/BDAL.pdf")
+        == 1
+    )
+    assert (
+        doc_links._rank("https://cdn.mdt-group.com/x/AKD-0424R-02_MDT_DS_DE.PDF") == 2
+    )
     # not a PDF
-    assert doc_links._rank("https://www.mdt.de/produktdetail/led-controller-akd.html") is None
+    assert (
+        doc_links._rank("https://www.mdt.de/produktdetail/led-controller-akd.html")
+        is None
+    )
 
 
 def test_is_foreign_manufacturer() -> None:
     # a different known manufacturer's domain is foreign; own domain and resellers/knx are not
-    assert doc_links._is_foreign_manufacturer("https://www.beg-luxomat.com/x.pdf", "basalte.be")
-    assert not doc_links._is_foreign_manufacturer("https://www.basalte.be/x.pdf", "basalte.be")
-    assert not doc_links._is_foreign_manufacturer("https://cdn.siblik.com/x.pdf", "mdt.de")
+    assert doc_links._is_foreign_manufacturer(
+        "https://www.beg-luxomat.com/x.pdf", "basalte.be"
+    )
+    assert not doc_links._is_foreign_manufacturer(
+        "https://www.basalte.be/x.pdf", "basalte.be"
+    )
+    assert not doc_links._is_foreign_manufacturer(
+        "https://cdn.siblik.com/x.pdf", "mdt.de"
+    )
     assert not doc_links._is_foreign_manufacturer("https://www.knx.org/x.pdf", "mdt.de")
 
 

@@ -832,16 +832,29 @@ class ProjectService:
             is_coupler_address,
         )
 
-        filter_table = (
-            compute_coupler_filter_table(
-                device_address, self._all_device_group_addresses()
+        filter_table = None
+        if is_coupler_address(device_address):
+            # The project's pass-through addresses have to be included, or the computed table
+            # blocks addresses it was explicitly configured to always route: group addresses (or
+            # whole ranges) flagged Unfiltered, and the line's AdditionalGroupAddresses.
+            unfiltered, additional = self._coupler_pass_through(device_address)
+            filter_table = compute_coupler_filter_table(
+                device_address,
+                self._all_device_group_addresses(),
+                unfiltered=unfiltered,
+                additional=additional,
             )
-            if is_coupler_address(device_address)
-            else None
-        )
         return GroupCommunication(
             device_address=device_address, links=links, filter_table=filter_table
         )
+
+    def _coupler_pass_through(
+        self, coupler_address: int
+    ) -> tuple[list[int], list[int]]:
+        """``(unfiltered, additional)`` pass-through addresses for a coupler; empty when unknown."""
+        if self._pid is None:
+            return [], []
+        return self._svc.coupler_pass_through(self._pid, coupler_address)
 
     def _all_device_group_addresses(self) -> dict[int, set[int]]:
         """Map every device's raw individual address to the raw group addresses it links (send or

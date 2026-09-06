@@ -48,7 +48,9 @@ class _FakeContents:
         self._project_archive = zipfile.ZipFile(buf)
         self._project_relative_path = "P-01/"
 
-    def open_project_0(self) -> io.BytesIO:  # unused by the trace reader; present for the protocol
+    def open_project_0(
+        self,
+    ) -> io.BytesIO:  # unused by the trace reader; present for the protocol
         return io.BytesIO(b"")
 
 

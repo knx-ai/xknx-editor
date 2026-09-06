@@ -222,14 +222,20 @@ def resolve_manual_url(
     3. the manufacturer homepage as a last resort."""
     order = (order_number or "").strip()
     name = (product_name or "").strip()
-    token = name.split()[0] if name else ""  # e.g. "JRA/S8.230.5.1" from the ABB product name
+    token = (
+        name.split()[0] if name else ""
+    )  # e.g. "JRA/S8.230.5.1" from the ABB product name
     # A bare brand word (e.g. "GIRA") is too generic for a KNX title search — it matches a random
     # device of that brand. Only keep a leading token that looks like a model code (contains a digit).
     if token and not any(ch.isdigit() for ch in token):
         token = ""
     terms = [t for t in dict.fromkeys([order, name, token]) if t]
     _log.debug(
-        "resolve manual", manufacturer=manufacturer, order=order, product=name, terms=terms
+        "resolve manual",
+        manufacturer=manufacturer,
+        order=order,
+        product=name,
+        terms=terms,
     )
     if not terms:
         domain = domain_for(manufacturer)
@@ -286,7 +292,9 @@ def resolve_manual_url(
         _log.info("manual: no PDF found, opening first result", url=fallback)
         return fallback
     if domain:
-        _log.info("manual not found, opening manufacturer site", url=f"https://{domain}")
+        _log.info(
+            "manual not found, opening manufacturer site", url=f"https://{domain}"
+        )
         return f"https://{domain}"
     _log.warning("manual not resolved", manufacturer=manufacturer, order=order)
     return None
