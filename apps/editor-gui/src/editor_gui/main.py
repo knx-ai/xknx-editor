@@ -21,6 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from xknxproject.exceptions import InvalidPasswordException, XknxProjectException
 
 from editor_gui import __version__
+from editor_gui.certs import ensure_ca_bundle
 from editor_gui.concurrency import MainThreadExecutor
 from editor_gui.master_data import MasterDataInfo, load_master, master_xml_bytes
 from editor_gui.plugins.base import API_VERSION, Logger, PanelDefinition, PluginAPI
@@ -2057,6 +2058,10 @@ def _detect_locale() -> str:
 
 def main() -> None:
     import sys
+
+    # Before anything can reach the network: the packaged app's OpenSSL points at a trust store
+    # that only exists on the build machine, so fall back to the bundled certifi (see certs.py).
+    ensure_ca_bundle()
 
     if "--profile" in sys.argv:
         import cProfile
