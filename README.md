@@ -1,5 +1,26 @@
 # XKNX Editor
 
+> [!WARNING]
+> **Experimental software. Not affiliated with the KNX Association.**
+>
+> XKNX Editor comes with no stability or safety guarantees. It writes to real KNX hardware, and a
+> failed or interrupted download can leave a device unloaded and its function unavailable until it
+> is reprogrammed. Do not use it on a production installation you cannot afford to take offline, and
+> keep a known-good ETS backup of any project before opening it here.
+>
+> [XKNX Toolkit](https://github.com/XKNX/xknxtoolkit), which the device-programming implementation
+> is based on, describes itself as alpha, experimental software that is **not intended for end
+> users** and that **cannot program devices** — the programming support here goes beyond it and has
+> correspondingly less mileage behind it. Large parts of both projects were built using LLMs.
+>
+> Verified device coverage is limited: see [Status and scope](#status-and-scope) for what has
+> actually been exercised on hardware. Please report what works and what does not.
+>
+> **"KNX" and "ETS" are trademarks of the KNX Association.** This is an independent project, not
+> affiliated with, endorsed by, or connected to the KNX Association or its ETS software — including
+> the `knx-ai` account name, which denotes KNX + AI and implies no official status. See
+> [Disclaimer](#disclaimer).
+
 XKNX Editor is a **multi-platform** desktop app (Windows, Linux, macOS) with native AI support for KNX building-automation projects based on KNX Standard Vol. 3, built on the open-source [xknx](https://github.com/XKNX/xknx)
 library. Import and export `.knxproj` projects natively by [XKNXProject](https://github.com/XKNX/xknxproject) and [OpenKNXProducer](https://github.com/OpenKNX/OpenKNXproducer), browse product catalogs, **program KNX
 devices** over a real bus based completely on the [XKNX Project XKNXToolkit](https://github.com/XKNX/xknxtoolkit), and drive it all through an **integrated MCP server for AI-assisted**
@@ -48,7 +69,8 @@ online catalog, cached locally for offline use.
 **Programming real devices** — commission a device end-to-end over a live connection (tunneling or
 routing, with gateway discovery), including setting a new device's address. A read-only **preflight**
 and **Test Before Programming** read the device back and show the exact changes before anything is
-written. Vendor-independent and verified on real hardware.
+written. Vendor-independent by design; see [Status and scope](#status-and-scope) for which devices
+have actually been exercised on a bus.
 
 ![Programming and preflight](docs/images/programming.png)
 
@@ -76,6 +98,36 @@ connection). Start it from **Settings → MCP**. It can edit the project and pro
 expose it to clients you trust.
 
 ![MCP server](docs/images/mcp.png)
+
+## Status and scope
+
+Read this before pointing the editor at an installation you care about.
+
+**Maturity.** Experimental. The project was published as a single initial commit, so there is no
+public development or review history to inspect. Large parts were built using LLMs.
+
+**Automated tests.** The suite is unit-level, running against in-process fakes rather than
+hardware — it pins protocol encoding, load-procedure sequencing and table layout, some of it
+byte-compared against captures from real devices. It does not exercise a bus, so it cannot catch a
+device that behaves differently from the standard, and passing tests are not evidence that
+programming a given device works.
+
+**Hardware coverage.** Device programming has been exercised on a small number of devices. If you
+have verified a device or a programming operation, please open an issue so this list can grow:
+
+<!-- Maintainers: list the devices and operations actually exercised on a bus, e.g.
+     - MDT BE-04001.02 — full download, partial download, individual address assignment
+     and note which failure paths (interrupted download, recovery) have been tested. -->
+
+_Not yet documented — to be filled in by the maintainers._
+
+**Failure recovery.** An interrupted download can leave a device unloaded. The editor exposes a
+read-only preflight and a "Test Before Programming" step to show what a download would change
+before it runs, but recovery from a partially applied download is not automated: expect to need
+ETS, or a repeat download, to restore a device.
+
+**Data Secure.** Keyring import and re-export are implemented. Treat secure commissioning as
+experimental.
 
 ## Running from source
 
