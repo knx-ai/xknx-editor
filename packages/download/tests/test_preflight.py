@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 from xknx.telegram.apci import MemoryRead, MemoryWrite, PropertyValueWrite
 
-from xknxeditor.download.errors import VerificationError
+from xknxeditor.download.errors import ImageError, VerificationError
 from xknxeditor.download.image import DownloadImage, MemorySegment
 from xknxeditor.download.preflight import (
     ByteRange,
@@ -255,3 +255,49 @@ def test_property_nonzero_extension_still_counts() -> None:
         planned=bytes.fromhex("000001"),
     )
     assert diff.changed_bytes == 1
+
+
+# --- missing programming data must not preview as "no change" ----------------
+
+
+async def test_preflight_rejects_missing_image_data() -> None:
+    """A range no image segment covers is a fatal ImageError in the download, so the preview
+    must not report it as nothing-to-change.
+
+    ``DownloadImage.masked_writes`` deliberately distinguishes ``None`` (no segment covers the
+    range - the programming data is missing) from ``[]`` (covered, but nothing to write there).
+    Collapsing them let a preflight report a clean, no-change preview for a download that then
+    aborts with ImageError partway through, after the Load State Machine had been unloaded.
+    """
+    image = DownloadImage(
+        segments=(MemorySegment(address=0x4000, data=b"\x01\x02\x03\x04"),),
+        properties=(),
+    )
+    # The control targets 0x9000, which no segment covers.
+    application = _application(
+        LdCtrlWriteMem(address=0x9000, size=4, verify=False, inline_data=None)
+    )
+    runner, device = _runner(application, image)
+
+    with pytest.raises(ImageError, match="no image data for address range"):
+        await runner.preflight()
+
+    assert not any(isinstance(p, MemoryWrite) for p in device.sent)  # still read-only
+
+
+async def test_preflight_still_allows_a_covered_range_that_writes_nothing() -> None:
+    """The empty-list case (segment covers the range, mask writes nothing) stays a clean preview."""
+    image = DownloadImage(
+        segments=(
+            MemorySegment(address=0x4000, data=b"\x01\x02\x03\x04", mask=b"\x00" * 4),
+        ),
+        properties=(),
+    )
+    application = _application(
+        LdCtrlWriteMem(address=0x4000, size=4, verify=False, inline_data=None)
+    )
+    runner, _device = _runner(application, image)
+
+    report = await runner.preflight()
+
+    assert not report.has_changes

@@ -1084,8 +1084,19 @@ class LoadProcedureRunner:
     async def _diff_masked(
         self, address: int, size: int, segments: list[SegmentDiff]
     ) -> None:
-        """Diff each masked write run the image would apply within ``[address, size)``."""
+        """Diff each masked write run the image would apply within ``[address, size)``.
+
+        ``masked_writes`` returns ``None`` when no segment covers the range at all (the programming
+        data is missing) and an empty list when a segment covers it but writes nothing there. Those
+        mean opposite things, so they must not be collapsed: :meth:`_write_mem` raises ``ImageError``
+        on ``None``, and a preflight that quietly recorded nothing would report a clean, no-change
+        preview for a download that cannot run.
+        """
         runs = self.image.masked_writes(address, size)
+        if runs is None:
+            raise ImageError(
+                f"no image data for address range {address:#06x}..{address + size:#06x}"
+            )
         if not runs:
             return
         programmer = await self._bus()
@@ -1104,8 +1115,15 @@ class LoadProcedureRunner:
 
         Mirrors :meth:`_write_rel_mem` - the image holds the segment in its own
         relative address space, and the device address adds the run-time table base.
+        ``None`` (no image data) is an error there, so it must be one here too; see
+        :meth:`_diff_masked`.
         """
         runs = self._relative_runs(control)
+        if runs is None:
+            raise ImageError(
+                f"no image data for relative range {control.offset:#06x}.."
+                f"{control.offset + control.size:#06x}"
+            )
         if not runs:
             return
         programmer = await self._bus()
