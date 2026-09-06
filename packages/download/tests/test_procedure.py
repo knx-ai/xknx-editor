@@ -941,3 +941,56 @@ async def test_negotiate_apdu_uses_device_maximum() -> None:
         and getattr(p, "property_id", None) == 56
         for p in manager.device.sent
     )
+
+
+async def test_compare_prop_rejects_a_truncated_response() -> None:
+    """A short reply must not shrink the compare onto a matching prefix.
+
+    The compare is the gate that stops a download reaching the wrong device, so a device that
+    answers one octet of a five octet application id has not passed it - it has failed to answer.
+    """
+    from xknxeditor.download.errors import VerificationError
+    from xknxeditor.namespaces.intermediate.ld_ctrl_compare_prop_t import (
+        LdCtrlCompareProp,
+    )
+
+    device = FakeDevice()
+    device.properties[(0, 13)] = b"\x00"  # truncated: 1 of 5 octets, and it matches
+    application = _application(
+        LdCtrlCompareProp(
+            obj_idx=0,
+            prop_id=13,
+            start_element=1,
+            count=1,
+            inline_data=b"\x00\x02\xa0\x62\x14",
+        )
+    )
+    runner = LoadProcedureRunner(
+        application, DownloadImage(segments=(), properties=()), DeviceProgrammer(device)
+    )
+    with pytest.raises(VerificationError, match="beyond the response"):
+        await runner.run()
+
+
+async def test_compare_prop_truncation_respects_the_mask() -> None:
+    """Octets past the reply that the mask excludes are not data the compare was checking."""
+    from xknxeditor.namespaces.intermediate.ld_ctrl_compare_prop_t import (
+        LdCtrlCompareProp,
+    )
+
+    device = FakeDevice()
+    device.properties[(0, 13)] = b"\x00\x02\xa0\x62"  # 4 octets; the 5th is masked out
+    application = _application(
+        LdCtrlCompareProp(
+            obj_idx=0,
+            prop_id=13,
+            start_element=1,
+            count=1,
+            inline_data=b"\x00\x00\xa0\x62\x14",
+            mask=b"\x00\x00\xff\xff\x00",  # version octet not checked
+        )
+    )
+    runner = LoadProcedureRunner(
+        application, DownloadImage(segments=(), properties=()), DeviceProgrammer(device)
+    )
+    await runner.run()  # must not raise: nothing checkable lies beyond the reply

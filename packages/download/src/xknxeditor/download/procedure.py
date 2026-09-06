@@ -126,6 +126,25 @@ def _bytes_match(
     return read_back[:length] == expected[:length]
 
 
+def _significant_octets(expected: bytes, mask: bytes | None, *, start: int) -> int:
+    """How many octets from ``start`` onwards the compare would actually have checked.
+
+    Used to tell a device's zero padding apart from a truncated response. An octet past the end of
+    a short reply is only ignorable when it carries nothing the compare cares about: a zero (the
+    procedure padding a property to its maximum element size) or, with a mask, an octet whose
+    checked bits are all clear. Anything else means the reply cut off real data.
+    """
+    if start >= len(expected):
+        return 0
+    if mask:
+        return sum(
+            1
+            for i in range(start, len(expected))
+            if expected[i] & (mask[i] if i < len(mask) else 0)
+        )
+    return sum(1 for octet in expected[start:] if octet)
+
+
 def _unsupported_compare_reason(control: object) -> str | None:
     """A reason string if a Compare control uses a semantic this engine does not implement, else None.
 
@@ -915,7 +934,10 @@ class LoadProcedureRunner:
         of the application id while manufacturer and version are ignored). The
         device's property length is authoritative: a procedure often carries the
         property's maximum element size padded with trailing zeros while the device
-        reports only its actual length, so only the overlapping prefix is compared.
+        reports only its actual length, so only the overlapping prefix is compared - but only when
+        the octets past the response are genuinely padding (zero, or excluded by the mask). A
+        response that cuts off octets the compare was meant to check is a failure, not a shorter
+        property: otherwise a truncated reply would pass this gate on a prefix.
         """
         index = await self._resolve_index(control)
         programmer = await self._bus()
@@ -935,6 +957,19 @@ class LoadProcedureRunner:
                 "read no data from the device"
             )
         mask = control.mask
+        # Shortening the compare to the overlap is only safe when the octets the response does not
+        # cover carry nothing the compare was meant to check - i.e. the procedure's own trailing
+        # padding, or octets the mask excludes anyway. Otherwise a truncated response would satisfy
+        # the gate on a prefix: a device answering one octet of a five octet application id would
+        # pass the very check that exists to stop us programming the wrong device.
+        uncovered = _significant_octets(expected, mask, start=len(read_back))
+        if uncovered:
+            raise VerificationError(
+                f"property compare for object {index} property {control.prop_id}: "
+                f"device returned {len(read_back)} octet(s) but {len(expected)} were expected "
+                f"and {uncovered} octet(s) beyond the response still carry data to check. "
+                f"Expected {expected.hex()}, read {read_back.hex()}"
+            )
         length = min(len(read_back), len(expected))
         if not _bytes_match(read_back, expected, mask, length):
             raise VerificationError(
