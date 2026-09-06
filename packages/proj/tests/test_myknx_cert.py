@@ -48,3 +48,54 @@ def test_cloud_disabled_license_raises_actionable_error(
     assert "KNX Specifications" in err.detail  # raw server text kept for logs
     assert "dongle" in err.user_message.lower()  # points the user at the workaround
     assert "\\n" not in err.user_message  # newlines flattened for a one-line toast
+
+
+def test_certificate_name_is_the_certificate_filename() -> None:
+    """ETS sends `{pid}.certificate` as projectName; the server echoes it into the CERT header."""
+    assert myknx_cert.certificate_name("P-0532") == "P-0532.certificate"
+
+
+def testnormalize_certificate_produces_ets_crlf_form() -> None:
+    """The API returns LF text; genuine ETS archives store CRLF with exactly one trailing CRLF."""
+    out = myknx_cert.normalize_certificate(
+        'CERT KNX:"P-1.certificate"\n\tID="CloudLicense"\n\tSIGN=AB\n'
+    )
+    assert out == b'CERT KNX:"P-1.certificate"\r\n\tID="CloudLicense"\r\n\tSIGN=AB\r\n'
+    # idempotent: already-CRLF input must not gain \r\r\n
+    assert myknx_cert.normalize_certificate(out.decode("utf-8")) == out
+
+
+def testnormalize_certificate_collapses_trailing_blank_lines() -> None:
+    assert myknx_cert.normalize_certificate("CERT\n\n\n") == b"CERT\r\n"
+
+
+def test_certificate_response_bare_json_string_is_unescaped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint returns a bare JSON *string*; returning it verbatim wrote the escaping into
+    {pid}.certificate (file starting with a quote, literal \\n), which ETS rejects."""
+    body = (
+        b'"CERT KNX:\\"P-9.certificate\\"\\n\\tID=\\"CloudLicense\\"\\n\\tSIGN=FF\\n"'
+    )
+
+    session = MyKnxSession(access_token="", session_id="s", next_ot_token="t")
+    calls: list[str] = []
+
+    def fake_req(
+        method: str, path: str, body_bytes: bytes | None = None
+    ) -> tuple[int, bytes]:
+        calls.append(path)
+        if path.endswith("/certificate"):
+            return 200, body
+        if path == "/workset":
+            return 200, b'{"id": "WS1"}'
+        return 200, b"{}"
+
+    monkeypatch.setattr(session, "_req", fake_req)
+    cert = session.project_certificate("PROD", "hash", "P-9.certificate")
+
+    assert cert == (
+        b'CERT KNX:"P-9.certificate"\r\n\tID="CloudLicense"\r\n\tSIGN=FF\r\n'
+    )
+    assert not cert.startswith(b'"')
+    assert b"\\n" not in cert

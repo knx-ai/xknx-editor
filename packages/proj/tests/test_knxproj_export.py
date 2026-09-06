@@ -1,6 +1,7 @@
 """Round-trip test for the simple .knxproj export: build a project via the core API, export it to
 a ``.knxproj``, then re-import it (real xknxproject parse) and check topology/GAs/links survive."""
 
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -347,7 +348,10 @@ def test_certificate_signer_embeds_certificate(tmp_path: Path) -> None:
         assert seen["pid"] == pid
         assert seen["sig"] == zf.read(f"{pid}.signature")
         assert not zf.read(f"{pid}.signature").startswith(b"\xef\xbb\xbf")
-        assert seen["name"] == "New project"
+        # The server echoes project_name into the certificate's `CERT KNX:"..."` header, and ETS
+        # expects it to name the certificate file -- not the human-readable project name, which
+        # yields a valid certificate ETS rejects as uncertified.
+        assert seen["name"] == f"{pid}.certificate"
 
 
 def test_certificate_signer_returning_none_skips_certificate(tmp_path: Path) -> None:
@@ -554,3 +558,54 @@ def test_export_project_name_override(tmp_path: Path) -> None:
     svc2 = ProjectService()
     svc2.open(src)
     assert svc2.project(pid).name == "New project"
+
+
+def test_certificate_export_writes_validation_and_info(tmp_path: Path) -> None:
+    """A certified export carries `.validation` and `{pid}.info` in the ETS byte layout."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-VAL")
+    svc.close(pid)
+
+    cert = b'CERT KNX:"P-VAL.certificate"\r\n\tID="CloudLicense"\r\n\tSIGN=DEADBEEF\r\n'
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out, certificate_signer=lambda _pid, _sig, _name: cert)
+
+    with zipfile.ZipFile(out) as zf:
+        validation = zf.read(".validation")
+        signature = zf.read(f"{pid}.signature")
+        info = zf.read(f"{pid}.info")
+
+    # `.validation` inlines the certificate, then the folder signature, then the outcome lines.
+    assert validation.startswith(b'certificate:CERT KNX:"P-VAL.certificate"\r\n')
+    assert b"\r\n\r\n\r\nsignature:" + signature in validation
+    assert validation.endswith(
+        b"\r\ncertificate.IsValid:True\r\nvalidation succeeded:True\r\n"
+    )
+    assert b"\n" not in validation.replace(b"\r\n", b"")  # CRLF throughout
+
+    # `{pid}.info` is two-space JSON with CRLF and no trailing newline; its Guid must match
+    # the one written into project.xml, not a second random uuid4().
+    assert info.startswith(b"{\r\n") and info.endswith(b"\r\n}")
+    parsed = json.loads(info.decode("utf-8"))
+    assert parsed["IsPasswordProtected"] is False
+    with zipfile.ZipFile(out) as zf:
+        project_xml = zf.read(f"{pid}/project.xml").decode("utf-8")
+    assert f'Guid="{parsed["ProjectGuid"]}"' in project_xml
+
+
+def test_uncertified_export_still_writes_info_but_no_validation(tmp_path: Path) -> None:
+    """`{pid}.info` is unconditional; `.validation` only exists when a certificate was obtained."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-NOVAL")
+    svc.close(pid)
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out)
+
+    with zipfile.ZipFile(out) as zf:
+        names = zf.namelist()
+    assert f"{pid}.info" in names
+    assert ".validation" not in names

@@ -34,6 +34,7 @@ Signature state of the exported archive:
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -70,6 +71,51 @@ logger = logging.getLogger(__name__)
 # The concrete MyKnx implementation lives in :mod:`myknx_cert` (kept out of this module so the
 # export itself performs no network I/O unless a signer is passed in).
 CertificateSigner = Callable[[str, bytes, str], bytes | None]
+
+
+def _project_info(project_guid: str, project_name: str) -> bytes:
+    """Return the top-level ``{pid}.info`` member as ETS writes it.
+
+    Genuine archives store two-space-indented JSON with CRLF line endings and no trailing
+    newline, e.g.::
+
+        {
+          "ProjectGuid": "f674776d-715f-4249-ab60-6e954f96f54d",
+          "ProjectName": "Trezzo - Zivolo",
+          "IsPasswordProtected": false
+        }
+    """
+    body = json.dumps(
+        {
+            "ProjectGuid": project_guid,
+            "ProjectName": project_name,
+            "IsPasswordProtected": False,
+        },
+        indent=2,
+    )
+    return body.replace("\n", "\r\n").encode("utf-8")
+
+
+def validation_record(certificate: bytes, folder_signature: bytes) -> bytes:
+    """Return the top-level ``.validation`` member as ETS writes it.
+
+    Layout verified byte-for-byte against a genuine ETS6 archive: the certificate inlined after
+    ``certificate:``, a blank line, the folder signature after ``signature:``, then the two
+    outcome lines. CRLF throughout; the certificate block already ends in one CRLF, so two more
+    produce the blank line ETS emits.
+    """
+    cert = certificate.replace(b"\r\n", b"\n").replace(b"\r", b"\n").rstrip(b"\n")
+    cert = cert.replace(b"\n", b"\r\n")
+    signature = folder_signature.removeprefix(b"\xef\xbb\xbf").strip()
+    return (
+        b"certificate:"
+        + cert
+        + b"\r\n\r\n\r\n"
+        + b"signature:"
+        + signature
+        + b"\r\ncertificate.IsValid:True"
+        + b"\r\nvalidation succeeded:True\r\n"
+    )
 
 
 @dataclass
@@ -547,6 +593,9 @@ class _Writer:
         # file has no valid signature"). Fall back to a fresh Guid + the current time so a
         # from-scratch export imports.
         now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f0Z")
+        # Bind the Guid once: {pid}.info repeats it, and a second `uuid4()` there would disagree
+        # with project.xml.
+        project_guid = project.guid or str(uuid4())
         info = self._el(
             p,
             "ProjectInformation",
@@ -554,7 +603,7 @@ class _Writer:
             GroupAddressStyle=project.group_address_style,
             Comment="",
             LastUsedPuid=self._puid,
-            Guid=project.guid or str(uuid4()),
+            Guid=project_guid,
             LastModified=project.last_modified or now,
         )
         # Re-emit the ETS project log verbatim so a round-trip preserves the history. The Comment is
@@ -573,8 +622,10 @@ class _Writer:
 
         own_paths = {
             "knx_master.xml",
+            ".validation",
             f"{pid}.signature",
             f"{pid}.certificate",
+            f"{pid}.info",
             f"{pid}/project.xml",
             f"{pid}/0.xml",
         }
@@ -603,7 +654,14 @@ class _Writer:
         certificate: bytes | None = None
         if certificate_signer is not None:
             logger.debug("export: requesting project certificate for %s", pid)
-            certificate = certificate_signer(pid, folder_signature, project.name)
+            # The signer's project_name is echoed by the server into the certificate's
+            # `CERT KNX:"..."` header, and ETS expects that to name the certificate *file*
+            # (genuine archives carry `CERT KNX:"P-0532.certificate"`). Passing project.name here
+            # produced a valid certificate bound to the display name, which ETS rejected as
+            # uncertified. See myknx_cert.certificate_name.
+            certificate = certificate_signer(
+                pid, folder_signature, f"{pid}.certificate"
+            )
             logger.debug(
                 "export: certificate %s",
                 f"{len(certificate)} bytes" if certificate else "skipped",
@@ -619,8 +677,15 @@ class _Writer:
             f"{pid}/project.xml": project_xml,
             f"{pid}/0.xml": zero,
         }
+        # ETS writes a top-level {pid}.info alongside the signature; strict imports look for it.
+        members[f"{pid}.info"] = _project_info(project_guid, project.name)
         if certificate:
             members[f"{pid}.certificate"] = certificate
+            # ETS also records the validation outcome in a top-level `.validation`, with the
+            # certificate inlined and the folder signature it binds to. Genuine archives carry
+            # `.validation` (and no separate `.certificate`); we emit both so either reader is
+            # satisfied.
+            members[".validation"] = validation_record(certificate, project_signature)
         for rel, data in self._binary_files.items():
             members[f"{pid}/{rel}"] = data
         for path, data in (extra_files or {}).items():

@@ -90,6 +90,29 @@ def project_hash(folder_signature: bytes) -> str:
     return hashlib.sha256(folder_signature).hexdigest()
 
 
+def certificate_name(pid: str) -> str:
+    """Return the ``projectName`` to send to the certificate endpoint.
+
+    The server echoes ``projectName`` verbatim into the certificate's ``CERT KNX:"..."`` header,
+    and ETS expects that header to name the certificate *file* -- genuine ETS archives carry
+    ``CERT KNX:"P-0532.certificate"``. Sending the human-readable project name instead yields a
+    cryptographically valid certificate bound to the wrong name, which ETS refuses with "The
+    project has not been certified with a valid ETS license".
+    """
+    return f"{pid}.certificate"
+
+
+def normalize_certificate(text: str) -> bytes:
+    """Return certificate text as ETS writes it: CRLF line endings, one trailing CRLF.
+
+    The API hands back LF-separated text; genuine ETS archives store CRLF throughout (verified
+    against a real ``.validation``). Normalising here keeps ``{pid}.certificate`` and the
+    ``certificate:`` block of ``.validation`` byte-identical to the ETS form.
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+    return (normalized.replace("\n", "\r\n") + "\r\n").encode("utf-8")
+
+
 def _post(
     url: str, body: bytes, headers: dict[str, str], timeout: float
 ) -> tuple[int, dict[str, str], bytes]:
@@ -288,10 +311,19 @@ class MyKnxSession:
                     data = json.loads(resp)
                     for key in ("certificate", "file", "File", "data"):
                         if data.get(key):
-                            return str(data[key]).encode("utf-8")
+                            return normalize_certificate(str(data[key]))
                 except json.JSONDecodeError:
                     pass
-            return resp
+            # The endpoint returns the certificate as a bare JSON *string* (not an object), i.e.
+            # the body is `"CERT KNX:\"...\"\n\tID=\"CloudLicense\"\n..."`. Returning it verbatim
+            # writes the JSON escaping into {pid}.certificate, so the file starts with a quote and
+            # contains literal \n / \" — ETS then rejects the project as uncertified.
+            if text.startswith('"'):
+                try:
+                    return normalize_certificate(json.loads(resp))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return normalize_certificate(text)
         finally:
             self._req("POST", f"/workset/{ws}/release")
 
@@ -379,12 +411,19 @@ def read_folder_signature(knxproj: Path | str) -> tuple[str, bytes]:
 
 
 def add_certificate_to_archive(knxproj: Path | str, certificate: bytes) -> None:
-    """Add ``{pid}.certificate`` (server-signed cert) to an exported ``.knxproj`` in place."""
+    """Add ``{pid}.certificate`` and ``.validation`` to an exported ``.knxproj`` in place.
+
+    ETS records the validation outcome in a top-level ``.validation`` with the certificate inlined;
+    both are written so either reader is satisfied (see knxproj_export.validation_record).
+    """
+    from xknxeditor.proj.core.knxproj_export import validation_record
+
     knxproj = Path(knxproj)
-    pid, _sig = read_folder_signature(knxproj)
+    pid, sig = read_folder_signature(knxproj)
     with zipfile.ZipFile(knxproj) as zf:
         members = {n: zf.read(n) for n in zf.namelist()}
     members[f"{pid}.certificate"] = certificate
+    members[".validation"] = validation_record(certificate, sig)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for n, data in members.items():
@@ -397,16 +436,23 @@ def sign_exported_knxproj(
     username: str,
     password: str,
     product_id: str,
-    project_name: str,
+    project_name: str | None = None,
 ) -> None:
     """End-to-end for an already-exported archive: MyKnx login -> cert -> bundle into the archive.
 
     Reads the folder signature from ``knxproj``, logs in with the user's MyKnx credentials, requests
-    the server-signed certificate for ``product_id``, and writes ``{pid}.certificate`` back into the
-    archive. Blocking; call from a worker thread in a GUI.
+    the server-signed certificate for ``product_id``, and writes ``{pid}.certificate`` plus
+    ``.validation`` back into the archive. Blocking; call from a worker thread in a GUI.
+
+    ``project_name`` defaults to :func:`certificate_name` for the archive's own pid, which is what
+    ETS sends; pass a value only to override it deliberately.
     """
-    _pid, folder_signature = read_folder_signature(knxproj)
+    pid, folder_signature = read_folder_signature(knxproj)
     cert = obtain_certificate(
-        username, password, product_id, folder_signature, project_name
+        username,
+        password,
+        product_id,
+        folder_signature,
+        project_name or certificate_name(pid),
     )
     add_certificate_to_archive(knxproj, cert)
