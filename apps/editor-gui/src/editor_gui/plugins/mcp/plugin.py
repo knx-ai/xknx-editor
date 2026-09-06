@@ -41,6 +41,21 @@ def _build_auth(token: str = "") -> Any:
     )
 
 
+def build_http_app(ctx: McpContext, auth: Any) -> Any:
+    """Build the ASGI app for the embedded server, with the Host/Origin guard enabled.
+
+    Without that guard, any web page the user happens to visit while the server is running can POST
+    to ``http://127.0.0.1:<port>/mcp`` from their browser (DNS rebinding) and drive the tools — which
+    here means reading and editing the project, exporting the loaded keyring, and programming devices
+    on a live KNX bus. FastMCP leaves the guard off by default for compatibility.
+
+    ``"auto"`` applies it exactly where it is needed: it validates Host and Origin whenever the
+    server is bound to loopback (the default, and the only case a browser can reach), and stays out
+    of the way of a deliberate non-loopback bind, which the bearer token is there to cover instead.
+    """
+    return build_server(ctx, auth=auth).http_app(host_origin_protection="auto")
+
+
 class McpServerPlugin:
     """Owns the embedded MCP server thread. Wired directly in ``main.py`` (not via the registry)."""
 
@@ -85,8 +100,9 @@ class McpServerPlugin:
                 "MCP server exposed on a non-loopback address without a bearer token",
                 host=host,
             )
-        app = build_server(self._ctx, auth=auth).http_app()
-        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        config = uvicorn.Config(
+            build_http_app(self._ctx, auth), host=host, port=port, log_level="warning"
+        )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(
             target=self._server.run, daemon=True, name="xknxeditor-mcp"
