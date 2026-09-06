@@ -877,10 +877,13 @@ class _Writer:
                 # inherit->default), so a user override survives export/re-import; a reconcile-added
                 # object with all-None (default) flags emits none and inherits the application
                 # default, matching genuine exports.
+                # Prefer the instance's own ref id: for a module-based application ``ref_id`` is the
+                # application-program definition, shared by every instance of the module, so writing
+                # it collapses the instances onto one id that no longer resolves to a ModuleInstance.
                 self._el(
                     refs,
                     "ComObjectInstanceRef",
-                    RefId=_relidref(co.ref_id),
+                    RefId=_relidref(co.instance_ref_id or co.ref_id),
                     ChannelId=co.channel_id,
                     Links=links or None,
                     ReadFlag=_enable(co.read_flag),

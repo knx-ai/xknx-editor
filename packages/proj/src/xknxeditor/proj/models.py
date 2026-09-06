@@ -314,6 +314,14 @@ class ComObject(Base):
         ForeignKey("devices.id"), nullable=False, index=True
     )
     ref_id: Mapped[str] = mapped_column(String, nullable=False)
+    # The instance's own @RefId as it appeared in the .knxproj, e.g.
+    # ``MD-1_M-1_MI-2_O-2-0_R-0``. For a module-based application this is the ONLY thing that says
+    # which module instance the object belongs to: ``ref_id`` above is the application-program
+    # definition id, which is deliberately module-instance-stripped and is therefore shared by every
+    # instance of the same module (106 objects collapse onto 7 definitions on a real Atios bridge).
+    # Export must re-emit this, or the refs no longer resolve. Empty for objects created in the
+    # editor rather than imported, in which case ``ref_id`` is the best available id.
+    instance_ref_id: Mapped[str] = mapped_column(String, nullable=False, default="")
     channel_id: Mapped[str | None] = mapped_column(String)
 
     read_flag: Mapped[bool | None] = mapped_column(Boolean)

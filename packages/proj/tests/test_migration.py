@@ -24,6 +24,7 @@ def test_reopen_adds_missing_columns(tmp_path: Path) -> None:
     con.execute("ALTER TABLE devices DROP COLUMN parameters_loaded")
     con.execute("ALTER TABLE group_addresses DROP COLUMN unfiltered")
     con.execute("ALTER TABLE lines DROP COLUMN additional_group_addresses")
+    con.execute("ALTER TABLE com_objects DROP COLUMN instance_ref_id")
     con.commit()
     con.close()
 
@@ -41,6 +42,9 @@ def test_reopen_adds_missing_columns(tmp_path: Path) -> None:
     assert "additional_group_addresses" in {
         c["name"] for c in cols.get_columns("lines")
     }
+    # Projects imported before instance_ref_id existed keep their (module-stripped) ref_id; the
+    # column is added empty so export falls back to it rather than failing to open the project.
+    assert "instance_ref_id" in {c["name"] for c in cols.get_columns("com_objects")}
 
 
 def test_reopen_migrates_json_column_to_valid_default(tmp_path: Path) -> None:

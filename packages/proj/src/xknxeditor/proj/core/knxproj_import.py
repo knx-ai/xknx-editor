@@ -495,8 +495,12 @@ def _build_module_instance(mi: object, module_args: ModuleArgs) -> ModuleInstanc
 
 
 def _build_com_object(coir: ComObjectInstanceRef) -> ComObject:
+    # ``com_object_ref_id`` is xknxproject's resolved *definition* id: it runs the ref through
+    # strip_module_instance(), so every instance of a module shares one value. Keep the instance's
+    # own ``ref_id`` alongside it, or the export cannot tell the instances apart again.
     return ComObject(
         ref_id=coir.com_object_ref_id or coir.ref_id,
+        instance_ref_id=coir.ref_id or "",
         channel_id=coir.channel,
         read_flag=coir.read_flag,
         write_flag=coir.write_flag,
