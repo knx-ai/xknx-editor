@@ -123,14 +123,32 @@ def _is_text_url(url: str) -> bool:
     return urlparse(url).path.lower().endswith(_TEXT_EXTS)
 
 
+# Redirects are followed by hand so every hop can be re-checked against the allowlist. Following
+# them automatically would make the allowlist a check on the URL we *asked* for rather than the host
+# we actually fetch from: any allowlisted site (or one that has been taken over, or simply an open
+# redirector) could bounce us to an intranet address or a cloud metadata endpoint, and the body would
+# come back to the model as if it were a manufacturer's manual.
+_MAX_REDIRECTS = 5
+
+
 def _http_get(url: str) -> bytes:
     import httpx
 
     try:
-        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-            resp = client.get(url, headers={"User-Agent": "xknx-editor"})
-            resp.raise_for_status()
-            return resp.content
+        with httpx.Client(follow_redirects=False, timeout=30.0) as client:
+            for _ in range(_MAX_REDIRECTS):
+                resp = client.get(url, headers={"User-Agent": "xknx-editor"})
+                if resp.next_request is None:
+                    resp.raise_for_status()
+                    return resp.content
+                url = str(
+                    resp.next_request.url
+                )  # resolved against the current URL by httpx
+                if not _host_allowed(url):
+                    raise ToolError(
+                        f"refusing to follow a redirect to a host that is not allowlisted: {url}"
+                    )
+            raise ToolError(f"too many redirects while downloading {url}")
     except httpx.HTTPError as exc:
         raise ToolError(f"could not download {url}: {exc}") from exc
 
