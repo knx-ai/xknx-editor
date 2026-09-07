@@ -47,6 +47,7 @@ from editor_gui.update_check import UpdateInfo, check_for_update
 from xknxeditor.prod.errors import ArchiveError
 from xknxeditor.proj import (
     MyKnxError,
+    ProjectStorageError,
     export_knxproj,
     fetch_myknx_products,
     myknx_certificate_signer,
@@ -846,6 +847,10 @@ class KnxGuiApp:
             self._add_recent(dest)
         except InvalidPasswordException:
             return True
+        except ProjectStorageError as e:
+            # A location that can't host the SQLite project (network share, read-only). The toast
+            # system surfaces this error record; keep the text short and actionable.
+            self._log.error("Cannot save the project here", source=source, error=str(e))
         except XknxProjectException as e:
             self._log.error("knxproj import failed", source=source, error=str(e))
         except Exception as e:
@@ -1005,6 +1010,9 @@ class KnxGuiApp:
             try:
                 self._project_service.open(Path(path))
                 self._add_recent(path)
+            except ProjectStorageError as e:
+                # The file lives somewhere SQLite can't operate (network share, read-only dir).
+                self._log.error("Cannot open the project here", path=path, error=str(e))
             except (ValueError, SQLAlchemyError) as e:
                 # A missing/stale/corrupt file must not take down the app (e.g. the demo project
                 # opened at startup, or a bad file picked via "Open Project").

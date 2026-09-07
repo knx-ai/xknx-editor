@@ -15,6 +15,7 @@ from xknxeditor.namespaces.intermediate.enable_t import Enable
 from xknxeditor.prod import Application
 from xknxeditor.prod.app_id import parse_app_id
 from xknxeditor.proj import ProjectService as _ProjectService
+from xknxeditor.proj import ensure_sqlite_writable
 from xknxeditor.proj import import_knxproj as _import_knxproj
 from xknxeditor.proj.core.addressing import GroupAddressStyle, parse_ga
 
@@ -385,6 +386,10 @@ class ProjectService:
         keeps reading the previous project (stable, no schema mutation) until the swap."""
         if not dest.suffix:
             dest = dest.with_suffix(".xknx")
+        # Fail fast if the destination can't host a SQLite DB (e.g. a network share): otherwise the
+        # heavy catalog ingest + parse below runs first and only then hits "unable to open database
+        # file" mid-DDL. Raises ProjectStorageError with a clear, actionable message.
+        ensure_sqlite_writable(dest)
         # Hold the shared lock for the whole import so per-frame UI reads on other threads bail to
         # empty placeholders (see editor_gui.concurrency) instead of racing these writes. This method is
         # meant to run on a worker thread; the lock is re-entrant, so our own nested reads still work.

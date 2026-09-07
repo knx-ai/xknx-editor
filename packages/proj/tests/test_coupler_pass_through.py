@@ -69,7 +69,9 @@ def test_unfiltered_range_is_inherited_by_its_addresses(tmp_path: Path) -> None:
     assert 0x0901 in unfiltered
 
 
-def test_additional_addresses_are_scoped_to_the_couplers_own_line(tmp_path: Path) -> None:
+def test_additional_addresses_are_scoped_to_the_couplers_own_line(
+    tmp_path: Path,
+) -> None:
     svc, pid, src = _project(tmp_path)
     area_id = svc.create_area(pid, 0, 1, "Area 1")
     line_a = svc.create_line(pid, area_id, 1, "Line 1")

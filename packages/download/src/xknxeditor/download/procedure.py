@@ -1064,8 +1064,12 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlAbsSegment):
             # An allocation whose range the image covers is an image backed write;
-            # preview only the bytes the image actually writes (its mask).
-            await self._diff_masked(control.address, control.size, segments)
+            # preview only the bytes the image actually writes (its mask). A range the
+            # image does NOT cover (a RAM/system segment) is allocated and left unwritten
+            # by _abs_segment, so it is a clean allocate-only preview here too, not an error.
+            await self._diff_masked(
+                control.address, control.size, segments, missing_ok=True
+            )
             return
         if isinstance(control, LdCtrlWriteProp):
             index = await self._resolve_index(control)
@@ -1117,7 +1121,12 @@ class LoadProcedureRunner:
         )
 
     async def _diff_masked(
-        self, address: int, size: int, segments: list[SegmentDiff]
+        self,
+        address: int,
+        size: int,
+        segments: list[SegmentDiff],
+        *,
+        missing_ok: bool = False,
     ) -> None:
         """Diff each masked write run the image would apply within ``[address, size)``.
 
@@ -1126,9 +1135,17 @@ class LoadProcedureRunner:
         mean opposite things, so they must not be collapsed: :meth:`_write_mem` raises ``ImageError``
         on ``None``, and a preflight that quietly recorded nothing would report a clean, no-change
         preview for a download that cannot run.
+
+        ``missing_ok`` mirrors the caller's write path: an ``LdCtrlWriteMem`` write raises on missing
+        data, but an ``LdCtrlAbsSegment`` allocation only writes the image slice *if there is one*
+        (:meth:`_abs_segment` uses ``if runs:``) - a RAM/system segment the image never fills is
+        allocated and left unwritten, not an error. So the AbsSegment diff passes ``missing_ok=True``
+        and a ``None`` there is a clean, allocate-only preview, exactly as the download behaves.
         """
         runs = self.image.masked_writes(address, size)
         if runs is None:
+            if missing_ok:
+                return
             raise ImageError(
                 f"no image data for address range {address:#06x}..{address + size:#06x}"
             )

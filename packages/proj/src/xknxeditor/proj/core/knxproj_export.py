@@ -1002,12 +1002,18 @@ class _Writer:
         # it for schemas below 20 rather than write an invalid tree.
         schema = self._ns.rsplit("/", 1)[-1]
         if not (schema.isdigit() and int(schema) >= 20):
-            logger.debug("schema %s has no GroupObjectTree; skipping for device %s", schema, device.id)
+            logger.debug(
+                "schema %s has no GroupObjectTree; skipping for device %s",
+                schema,
+                device.id,
+            )
             return
         try:
             src = ET.fromstring(raw)
         except ET.ParseError:
-            logger.debug("skipping malformed stored GroupObjectTree for device %s", device.id)
+            logger.debug(
+                "skipping malformed stored GroupObjectTree for device %s", device.id
+            )
             return
         self._graft(di, src)
 

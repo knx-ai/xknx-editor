@@ -12,15 +12,68 @@ default). This handles the common additive case automatically; a non-additive ch
 type change, data backfill) needs an explicit numbered step keyed off ``PRAGMA user_version``.
 """
 
+import contextlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import JSON, create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.schema import Column
 
 from xknxeditor.proj.models import Base
+
+
+class ProjectStorageError(RuntimeError):
+    """A project database cannot be created/opened at its location.
+
+    Almost always a **network share** (SMB/CIFS/NFS): a ``.xknx`` project is a live SQLite database,
+    and SQLite needs POSIX file locking + journal sidecars that network filesystems do not provide,
+    so it fails with "unable to open database file". Also covers read-only or permission-less
+    directories. The fix is to keep the project on a local disk.
+    """
+
+
+def _sqlite_file(url: str) -> str:
+    """The on-disk path from a ``sqlite:///<path>`` URL (for error messages)."""
+    return url[len("sqlite:///") :] if url.startswith("sqlite:///") else url
+
+
+def ensure_sqlite_writable(path: Path) -> None:
+    """Fail fast (with a clear :class:`ProjectStorageError`) if a SQLite DB can't live at ``path``.
+
+    Probes the *actual* capability that matters — creating a database and doing a transactional
+    write (which forces a journal + file lock) in ``path``'s directory — with a throwaway file, so
+    an unusable location (network share, read-only dir) is caught up front instead of as a raw
+    ``OperationalError`` part-way through a long import.
+    """
+    directory = path.parent
+    probe = directory / f".xknx-writeprobe-{os.getpid()}.tmp"
+    engine: Engine | None = None
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        engine = create_engine(url_for(probe))
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE _probe (x INTEGER)"))
+            conn.execute(text("INSERT INTO _probe VALUES (1)"))
+    except (OperationalError, OSError) as e:
+        raise ProjectStorageError(
+            f"Cannot create a project database in {directory}. This is usually a network drive "
+            "(SMB/NFS) or a read-only folder; KNX project files use SQLite and must be on a local "
+            "disk. Choose a local folder and copy the finished file to the share afterwards."
+        ) from e
+    finally:
+        if engine is not None:
+            engine.dispose()
+        # Best-effort cleanup: the probe (and any journal sidecar) may not exist, and on an
+        # unusable location even the unlink can raise (e.g. a non-directory parent) — never let
+        # cleanup mask the real error.
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            with contextlib.suppress(OSError):
+                Path(f"{probe}{suffix}").unlink(missing_ok=True)
+
 
 # Bump when adding a non-additive migration below. Additive column adds are handled generically and
 # do not require a bump. Stamped into the file's ``PRAGMA user_version`` so future migrations can
@@ -130,6 +183,17 @@ def make_engine(url: str) -> Engine:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-    Base.metadata.create_all(engine)
-    _migrate(engine)
+    # create_all/_migrate are the first DB writes; on a network share (SMB/NFS) or a read-only dir
+    # SQLite fails here with "unable to open database file". Translate that into a clear, typed
+    # error for every caller (create/open/import) instead of a raw OperationalError stacktrace.
+    try:
+        Base.metadata.create_all(engine)
+        _migrate(engine)
+    except OperationalError as e:
+        engine.dispose()
+        raise ProjectStorageError(
+            f"Cannot open the project database {_sqlite_file(url)}. This is usually a network drive "
+            "(SMB/NFS) or a read-only folder; KNX project files use SQLite and must be on a local "
+            "disk."
+        ) from e
     return engine

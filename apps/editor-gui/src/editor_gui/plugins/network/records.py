@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from typing import Any, cast
 
 from xknx.telegram import Telegram as XknxTelegram
@@ -58,9 +59,12 @@ class CemiRecord:
     flags: int | None
     hops: int | None
 
-    @property
+    @cached_property
     def timestamp_str(self) -> str:
-        return self.timestamp.strftime("%H:%M:%S")
+        # ``timestamp`` is stored UTC-aware (datetime.now(UTC)); ``astimezone()`` converts it to the
+        # local zone for display, otherwise the monitor shows UTC and looks hours off. Cached because
+        # strftime triggers a tzset (getenv/notify) on macOS and these rows re-render every frame.
+        return self.timestamp.astimezone().strftime("%H:%M:%S")
 
     @property
     def raw_hex(self) -> str:
@@ -212,6 +216,9 @@ class TelegramRecord:
             return str(payload_value) if payload_value is not None else ""
         return ""
 
-    @property
+    @cached_property
     def timestamp_str(self) -> str:
-        return self.timestamp.strftime("%H:%M:%S")
+        # ``timestamp`` is stored UTC-aware (datetime.now(UTC)); ``astimezone()`` converts it to the
+        # local zone for display, otherwise the monitor shows UTC and looks hours off. Cached because
+        # strftime triggers a tzset (getenv/notify) on macOS and these rows re-render every frame.
+        return self.timestamp.astimezone().strftime("%H:%M:%S")

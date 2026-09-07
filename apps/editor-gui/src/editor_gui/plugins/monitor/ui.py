@@ -107,24 +107,31 @@ class MonitorPanel:
         imgui.table_setup_column("Service", imgui.TableColumnFlags_.width_stretch, 0.12)
         imgui.table_setup_column("Value", imgui.TableColumnFlags_.width_stretch, 0.2)
         imgui.table_headers_row()
-        for rec in reversed(records):  # newest first
-            ga = by_addr.get(rec.destination)
-            dpt = ga.datapoint_type if ga else None
-            imgui.table_next_row()
-            imgui.table_set_column_index(0)
-            imgui.text(rec.timestamp.strftime("%H:%M:%S"))
-            imgui.table_set_column_index(1)
-            imgui.text_disabled(rec.source)
-            imgui.table_set_column_index(2)
-            imgui.text(rec.destination)
-            imgui.table_set_column_index(3)
-            text_clipped_tooltip(ga.name if ga else "", disabled=True)
-            imgui.table_set_column_index(4)
-            imgui.text(rec.service)
-            imgui.table_set_column_index(5)
-            text_clipped_tooltip(
-                _decode(rec.payload, dpt) if rec.payload is not None else ""
-            )
+        # Only build/format the rows imgui actually shows: ListClipper skips off-screen rows so the
+        # per-frame cost is O(visible), not O(2000). (Row timestamps are cached on the record.)
+        rows = list(reversed(records))  # newest first
+        clipper = imgui.ListClipper()
+        clipper.begin(len(rows))
+        while clipper.step():
+            for i in range(clipper.display_start, clipper.display_end):
+                rec = rows[i]
+                ga = by_addr.get(rec.destination)
+                dpt = ga.datapoint_type if ga else None
+                imgui.table_next_row()
+                imgui.table_set_column_index(0)
+                imgui.text(rec.time_str)
+                imgui.table_set_column_index(1)
+                imgui.text_disabled(rec.source)
+                imgui.table_set_column_index(2)
+                imgui.text(rec.destination)
+                imgui.table_set_column_index(3)
+                text_clipped_tooltip(ga.name if ga else "", disabled=True)
+                imgui.table_set_column_index(4)
+                imgui.text(rec.service)
+                imgui.table_set_column_index(5)
+                text_clipped_tooltip(
+                    _decode(rec.payload, dpt) if rec.payload is not None else ""
+                )
         imgui.end_table()
 
     def _render_command_bar(self) -> None:
@@ -193,7 +200,7 @@ class MonitorPanel:
                 _decode(latest.payload, ga.datapoint_type) if latest else ""
             )
             imgui.table_set_column_index(4)
-            imgui.text_disabled(latest.timestamp.strftime("%H:%M:%S") if latest else "")
+            imgui.text_disabled(latest.time_str if latest else "")
 
         imgui.end_table()
 

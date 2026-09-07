@@ -169,6 +169,43 @@ async def test_preflight_previews_abs_segment_without_allocating() -> None:
     assert segment.changed_bytes == 3  # device is all zeros
 
 
+async def test_preflight_abs_segment_uncovered_range_is_clean_not_error() -> None:
+    """A RAM/system AbsSegment the image never fills must preview as allocate-only, not fail.
+
+    Regression: a real device (Interra ITR524, schema 20) allocates a RAM segment at 0x0700 that
+    the download image does not cover. ``_abs_segment`` allocates it and writes nothing (``if
+    runs:``). The preflight must mirror that - a missing image slice for an *AbsSegment* is a clean
+    allocate-only preview, not the ``ImageError`` that a missing *WriteMem* slice raises. Sharing
+    ``_diff_masked``'s raise-on-None across both once made this device fail its read-only test even
+    though a real download of the same scope succeeded.
+    """
+    image = DownloadImage(
+        segments=(MemorySegment(address=0x4400, data=b"\x11\x22\x33"),),
+        properties=(),
+    )
+    application = _application(
+        LdCtrlAbsSegment(
+            obj_type=_ADDRESS_TABLE_TYPE,
+            occurrence=0,
+            seg_type=0,
+            address=0x0700,  # RAM; no image segment covers it
+            size=538,
+            access=0xFF,
+            mem_type=2,
+            seg_flags=0x80,
+        )
+    )
+    runner, device = _runner(application, image)
+
+    report = await runner.preflight()  # must not raise ImageError
+
+    assert not any(
+        isinstance(p, MemoryWrite) for p in device.sent
+    )  # allocate-only, read-only
+    assert report.segments == ()  # nothing to diff for the uncovered range
+    assert not report.has_changes
+
+
 async def test_preflight_previews_property_without_writing() -> None:
     application = _application(
         LdCtrlWriteProp(

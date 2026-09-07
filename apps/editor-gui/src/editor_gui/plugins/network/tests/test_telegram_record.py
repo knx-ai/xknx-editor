@@ -30,4 +30,7 @@ def test_telegram_record_properties(mock_telegrams: list[TelegramRecord]) -> Non
 
 def test_telegram_record_timestamp(mock_telegrams: list[TelegramRecord]) -> None:
     record = mock_telegrams[0]
-    assert record.timestamp_str == "09:15:00"
+    # The record's timestamp is UTC-aware; the monitor shows it in LOCAL time (astimezone), so the
+    # rendered string must match the local conversion of that instant — not the raw UTC "09:15:00",
+    # which was wrong for anyone not on UTC.
+    assert record.timestamp_str == record.timestamp.astimezone().strftime("%H:%M:%S")

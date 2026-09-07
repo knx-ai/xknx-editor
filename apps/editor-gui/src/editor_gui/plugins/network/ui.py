@@ -67,7 +67,6 @@ class NetworkPanel:
         self._last_selected: int = -1
         self._prev_scroll_max = 0.0
         self._filter_text = ""
-        self._last_count = 0
         self._show_cemi = False
 
     def render(self) -> None:
@@ -77,17 +76,20 @@ class NetworkPanel:
         else:
             self._render_table()
 
-    def _apply_autoscroll(self, current_count: int) -> None:
+    def _apply_autoscroll(self) -> None:
         """Stick to the newest row as telegrams arrive, but stop once the user scrolls up.
 
         "Following" is measured against the PREVIOUS frame's scroll maximum (before new rows grew
         it), so a manual scroll-up is detected even while rows stream in every frame. Auto-scroll
         resumes automatically when the user scrolls back to the bottom."""
         following = imgui.get_scroll_y() >= self._prev_scroll_max - 4.0
-        if current_count > self._last_count and following:
-            imgui.set_scroll_here_y(1.0)
+        # Scroll to the content bottom via the scroll maximum, NOT set_scroll_here_y: with
+        # ListClipper the last row is not submitted when off-screen, so set_scroll_here_y would only
+        # reach the last VISIBLE row. This also keeps working once the capture deque is full and the
+        # row count plateaus (a "new rows arrived" count guard would stop scrolling then).
+        if following:
+            imgui.set_scroll_y(imgui.get_scroll_max_y())
         self._prev_scroll_max = imgui.get_scroll_max_y()
-        self._last_count = current_count
 
     def _render_record_button(self, state: CaptureState) -> None:
         draw_list = imgui.get_window_draw_list()
@@ -179,12 +181,10 @@ class NetworkPanel:
         if imgui.radio_button("Telegrams", not self._show_cemi):
             self._show_cemi = False
             self._selected.clear()
-            self._last_count = 0
         imgui.same_line()
         if imgui.radio_button("CEMI", self._show_cemi):
             self._show_cemi = True
             self._selected.clear()
-            self._last_count = 0
 
     def _render_table(self) -> None:
         telegrams = self._get_telegrams()
@@ -231,10 +231,15 @@ class NetworkPanel:
         imgui.table_setup_column("Value", imgui.TableColumnFlags_.width_stretch)
         imgui.table_headers_row()
 
-        for i, telegram in enumerate(telegrams):
-            self._render_row(i, telegram)
+        # ListClipper renders only the visible rows, so a full 10k-row capture costs O(visible)
+        # per frame instead of O(all) (and each row's timestamp is cached, not re-formatted).
+        clipper = imgui.ListClipper()
+        clipper.begin(len(telegrams))
+        while clipper.step():
+            for i in range(clipper.display_start, clipper.display_end):
+                self._render_row(i, telegrams[i])
 
-        self._apply_autoscroll(len(telegrams))
+        self._apply_autoscroll()
 
         imgui.end_table()
         self._handle_shortcuts()
@@ -349,10 +354,13 @@ class NetworkPanel:
         imgui.table_setup_column("Raw", imgui.TableColumnFlags_.width_stretch)
         imgui.table_headers_row()
 
-        for i, rec in enumerate(records):
-            self._render_cemi_row(i, rec)
+        clipper = imgui.ListClipper()
+        clipper.begin(len(records))
+        while clipper.step():
+            for i in range(clipper.display_start, clipper.display_end):
+                self._render_cemi_row(i, records[i])
 
-        self._apply_autoscroll(len(records))
+        self._apply_autoscroll()
 
         imgui.end_table()
 
@@ -458,5 +466,4 @@ class NetworkPanel:
 
     def _clear_telegrams(self) -> None:
         self._selected.clear()
-        self._last_count = 0
         self._on_clear()

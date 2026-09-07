@@ -8,6 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from xknx.cemi import CEMIFrame, CEMILData, CEMIMessageCode
@@ -32,6 +33,12 @@ class LiveValue:
     timestamp: datetime
     service: str  # "Write" | "Response"
 
+    @cached_property
+    def time_str(self) -> str:
+        # Cached: strftime does a tzset (getenv/notify) on macOS and the monitor re-renders every
+        # frame; format the fixed timestamp once, not per frame.
+        return self.timestamp.strftime("%H:%M:%S")
+
 
 @dataclass
 class TelegramRecord:
@@ -42,6 +49,11 @@ class TelegramRecord:
     destination: str  # group address
     service: str  # "Write" | "Response" | "Read"
     payload: Any  # raw DPTArray/DPTBinary value, or None for Read
+
+    @cached_property
+    def time_str(self) -> str:
+        # Cached: see LiveValue.time_str — avoids a per-frame strftime/tzset per visible row.
+        return self.timestamp.strftime("%H:%M:%S")
 
 
 class MonitorService:

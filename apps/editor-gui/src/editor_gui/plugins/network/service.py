@@ -1,3 +1,4 @@
+from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import Enum
@@ -12,6 +13,11 @@ from editor_gui.plugins.network.records import CemiRecord, TelegramRecord
 if TYPE_CHECKING:
     from editor_gui.plugins.base import Logger
 
+# Bounded scrollback of the capture. Without a cap these lists grew for the whole session (~2 GB
+# after a day of live capture); the network monitor is a live diagnostic view, so keep the most
+# recent frames and drop older ones (export for longer captures).
+_RECORD_LOG_MAX = 10_000
+
 
 class CaptureState(Enum):
     STOPPED = "stopped"
@@ -20,8 +26,9 @@ class CaptureState(Enum):
 
 class NetworkService:
     def __init__(self) -> None:
-        self._telegrams: list[TelegramRecord] = []
-        self._cemi_records: list[CemiRecord] = []
+        # Bounded deques: append on the interface thread, snapshot on the UI thread.
+        self._telegrams: deque[TelegramRecord] = deque(maxlen=_RECORD_LOG_MAX)
+        self._cemi_records: deque[CemiRecord] = deque(maxlen=_RECORD_LOG_MAX)
         self._state = CaptureState.STOPPED
         self._listeners: dict[str, list[Callable[..., Any]]] = {}
         self._log: Logger
@@ -35,11 +42,13 @@ class NetworkService:
 
     @property
     def telegrams(self) -> list[TelegramRecord]:
-        return self._telegrams
+        # Snapshot: the UI indexes/enumerates this; a list copy is O(1)-per-ref and keeps a stable
+        # view for the frame even as the interface thread appends.
+        return list(self._telegrams)
 
     @property
     def cemi_records(self) -> list[CemiRecord]:
-        return self._cemi_records
+        return list(self._cemi_records)
 
     def start(self) -> None:
         if self._state == CaptureState.CAPTURING:

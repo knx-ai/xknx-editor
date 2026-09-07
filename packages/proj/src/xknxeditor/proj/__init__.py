@@ -33,6 +33,7 @@ from xknxeditor.proj.core import (
     sign_exported_knxproj,
     signing_key_is_placeholder,
 )
+from xknxeditor.proj.db import ProjectStorageError, ensure_sqlite_writable
 
 __all__ = [
     "DLL_NAME",
@@ -40,8 +41,10 @@ __all__ = [
     "KeyExtractionError",
     "MyKnxError",
     "ProjectService",
+    "ProjectStorageError",
     "current_signing_key",
     "default_dll_path",
+    "ensure_sqlite_writable",
     "export_knxproj",
     "extract_converter_key",
     "extraction_backend",
