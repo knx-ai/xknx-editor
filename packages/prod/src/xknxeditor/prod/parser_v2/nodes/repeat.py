@@ -49,7 +49,9 @@ class RepeatNode(DynamicNode):
             self._widget_param_refs is None or count_param in self._widget_param_refs
         )
         if gating and count_param:
-            capture.push(count_param)  # type: ignore[union-attr]
+            # Qualify the count gate in its OWNING scope (see ChooseWhenNode): module-local ->
+            # instance-qualified, ancestor/app param -> unqualified. Identity at global scope.
+            capture.push(ctx.qualify_local(count_param))  # type: ignore[union-attr]
         try:
             for i in range(1, self._count(ctx) + 1):
                 rctx = ctx.repeat_ctx(i)

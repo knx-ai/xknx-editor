@@ -69,6 +69,8 @@ class ParameterState:
         "_alloc_positions",
         "_children",
         "_com_obj_instance_refs",
+        "_discovered_active_param_refs",
+        "_known_param_ref_values",
         "_param_ref_defaults",
         "_parent",
         "_text",
@@ -82,10 +84,21 @@ class ParameterState:
         param_ref_defaults: dict[str, str] | None = None,
     ) -> None:
         self.param_ref_id_to_value: dict[str, str] = dict(values or {})
+        # Durable store of every EXPLICIT value ever imported or set in this scope. Unlike
+        # param_ref_id_to_value it is never trimmed to the active set, so a parameter whose block was
+        # deactivated (its value dropped from the active/encoding map by trim_to_active) can still be
+        # resolved to its real value when the block is reactivated -- otherwise get() falls back to a
+        # static default and the eval picks a different Choose branch (different ComObjectRef).
+        self._known_param_ref_values: dict[str, str] = dict(values or {})
         self._parent: ParameterState | None = parent
         self._children: dict[str, ModuleState] = {}
         self._text: dict[str, str] = {}
         self._active_param_refs: set[str] = set()
+        # Params marked active during the union-discovery pass (a full eval WITHOUT union
+        # suppression). Frozen by snapshot_discovered_active() before the render pass, then read by
+        # a Union-member Choose to decide the active overlay order-independently (the reached member
+        # wins, not the one carrying a stale explicit value from an inactive branch).
+        self._discovered_active_param_refs: set[str] = set()
         self._active_module_keys: set[str] = set()
         self._active_com_object_refs: set[str] = set()
         self._alloc_positions: dict[str, int] = {}
@@ -93,6 +106,11 @@ class ParameterState:
         self._com_obj_instance_refs: dict[str, ComObjectInstanceRef] = {}
 
     def get(self, ref_id: str) -> str | None:
+        # Prefer the durable known value: it survives trim_to_active(), so an inactive block's
+        # imported value still drives branch selection when the block is (re)evaluated.
+        known = self._known_param_ref_values.get(ref_id)
+        if known is not None:
+            return known
         val = self.param_ref_id_to_value.get(ref_id)
         if val is not None:
             return val
@@ -101,6 +119,19 @@ class ParameterState:
             if parent_val is not None:
                 return parent_val
         return self._param_ref_defaults.get(ref_id)
+
+    def has_explicit_param(self, ref_id: str) -> bool:
+        """Whether ``ref_id`` has an explicit (imported or set) value in this scope or a parent.
+
+        Distinguishes a real, chosen value from a mere static default -- used to resolve which member
+        of a Union is the active overlay independent of node/source ordering."""
+        if ref_id in self._known_param_ref_values:
+            return True
+        return (
+            self._parent.has_explicit_param(ref_id)
+            if self._parent is not None
+            else False
+        )
 
     def set_param_ref_defaults(self, param_ref_defaults: dict[str, str]) -> None:
         self._param_ref_defaults = param_ref_defaults
@@ -113,6 +144,7 @@ class ParameterState:
 
     def set(self, ref_id: str, value: str) -> None:
         self.param_ref_id_to_value[ref_id] = value
+        self._known_param_ref_values[ref_id] = value
 
     def set_text(self, ref_id: str, text: str) -> None:
         self._text[ref_id] = text
@@ -121,6 +153,13 @@ class ParameterState:
         return self._text.get(ref_id)
 
     def mark_active_param(self, ref_id: str) -> None:
+        # A rendered widget re-enters the active/encoding map: restore its durable known value so a
+        # parameter whose value was trimmed while inactive encodes its real value once reactivated,
+        # not a static default.
+        if ref_id not in self.param_ref_id_to_value:
+            known = self._known_param_ref_values.get(ref_id)
+            if known is not None:
+                self.param_ref_id_to_value[ref_id] = known
         self._active_param_refs.add(ref_id)
 
     def mark_active_com_object(self, ref_id: str) -> None:
@@ -155,13 +194,37 @@ class ParameterState:
         self._alloc_positions[alloc_id] = position
 
     def reset_active(self) -> None:
-        """Reset active ref sets ahead of the next traversal."""
+        """Reset active ref sets ahead of the next traversal.
+
+        The discovered-active snapshot is intentionally NOT cleared: it is set once by the
+        discovery pass and consumed by the following render pass (which resets the live active
+        sets in between)."""
         self._active_param_refs.clear()
         self._active_module_keys.clear()
         self._active_com_object_refs.clear()
         self._alloc_positions.clear()
         for child in self._children.values():
             child.reset_active()
+
+    def snapshot_discovered_active(self) -> None:
+        """Freeze the current per-scope active params as the union-discovery result.
+
+        Called after a full eval with union suppression disabled; the render pass then reads it via
+        is_discovered_active() so a Union member's overlay decision does not depend on eval order."""
+        self._discovered_active_param_refs = set(self._active_param_refs)
+        for child in self._children.values():
+            child.snapshot_discovered_active()
+
+    def is_discovered_active(self, ref_id: str) -> bool:
+        """Whether ``ref_id`` was reached (marked active) in the union-discovery pass, in this scope
+        or a parent. Mirrors is_active_param but reads the frozen discovery snapshot."""
+        if ref_id in self._discovered_active_param_refs:
+            return True
+        return (
+            self._parent.is_discovered_active(ref_id)
+            if self._parent is not None
+            else False
+        )
 
     def discard_active_refs(
         self, param_ref_ids: set[str], com_object_ref_ids: set[str]
@@ -207,6 +270,25 @@ class ParameterState:
     def qualify(self, ref_id: str) -> str:
         return ref_id
 
+    def qualify_local(self, ref_id: str) -> str:
+        """Qualify ``ref_id`` in the scope that actually OWNS it, not the current one.
+
+        A module-scoped Choose/Repeat can gate on an ancestor/application parameter (its ref is not
+        module-def-local): that ref is marked active in the ancestor scope (unqualified), so its gate
+        must stay unqualified too. Only a ref owned by THIS module scope (in its local value/default
+        stores) gets the module-instance prefix. Prevents mis-qualifying inherited gate params, which
+        would drop their com-objects from the chain-AND active set. (Com-object leaves are always
+        current-scope-local, so they keep the plain ``qualify``.)"""
+        if (
+            ref_id in self._known_param_ref_values
+            or ref_id in self.param_ref_id_to_value
+            or ref_id in self._param_ref_defaults
+        ):
+            return self.qualify(ref_id)
+        if self._parent is not None:
+            return self._parent.qualify_local(ref_id)
+        return self.qualify(ref_id)
+
     def find_scope_for_qualified(
         self, ref_id: str
     ) -> tuple[ParameterState, str] | None:
@@ -229,8 +311,10 @@ class ParameterState:
         if found is not None:
             scope, local = found
             scope.param_ref_id_to_value.pop(local, None)
+            scope._known_param_ref_values.pop(local, None)
         else:
             self.param_ref_id_to_value.pop(ref_id, None)
+            self._known_param_ref_values.pop(ref_id, None)
 
     def module_child(
         self,
@@ -324,12 +408,10 @@ class GlobalState(ParameterState):
                     app_prefix = ref_id[:p]
                     suffix = ref_id[p + len(mid) :]
                     ms.module_instance_id = app_prefix + mid
-                    ms.param_ref_id_to_value[app_prefix + mid_to_mdid[mid] + suffix] = (
-                        value
-                    )
+                    ms.set(app_prefix + mid_to_mdid[mid] + suffix, value)
                     break
             else:
-                root.param_ref_id_to_value[ref_id] = value
+                root.set(ref_id, value)
 
         for coir in com_object_instance_refs or []:
             root._com_obj_instance_refs[coir.ref_id] = coir

@@ -93,6 +93,12 @@ class _Ctx:
     def get(self, ref_id: str) -> str:
         return self._values.get(ref_id, "")
 
+    def qualify(self, ref_id: str) -> str:
+        return ref_id  # global scope: identity (Choose/Repeat push the qualified gate id)
+
+    def qualify_local(self, ref_id: str) -> str:
+        return ref_id  # global scope: identity
+
     def repeat_ctx(self, _i: int) -> "_Ctx":
         return self  # same scope (carries the capture) for the synthetic test
 
@@ -195,3 +201,47 @@ def test_repeat_records_gate_chain_for_count_param() -> None:
     node.eval(_Ctx({"N": "2"}, cap))  # type: ignore[arg-type]
     assert cap.controlled_ref_ids() == {"co-r"}
     assert cap.chains["co-r"] == [frozenset({"N"}), frozenset({"N"})]  # two iterations
+
+
+def test_com_object_number_strips_only_terminal_ref() -> None:
+    """Canonicalize a com-object ref by dropping ONLY the terminal ``_R-<m>``, preserving any
+    module-instance path so distinct module instances stay distinct."""
+    from xknxeditor.prod.parser_v2.dynamic import _com_object_number
+
+    # top-level object: R- stripped -> O-<n>
+    assert _com_object_number("M-1_A-1_O-119_R-224") == "M-1_A-1_O-119"
+    # module-instanced object: MODULE PATH PRESERVED (not collapsed to O-2-23)
+    assert (
+        _com_object_number("MD-1_M-3_MI-1_O-2-23_R-1") == "MD-1_M-3_MI-1_O-2-23"
+    )
+    assert (
+        _com_object_number("MD-1_M-3_MI-2_O-2-23_R-1") == "MD-1_M-3_MI-2_O-2-23"
+    )
+    # two module instances of the same base object must NOT canonicalize equal
+    assert _com_object_number("MD-1_M-3_MI-1_O-2-23_R-1") != _com_object_number(
+        "MD-1_M-3_MI-2_O-2-23_R-1"
+    )
+    # no terminal R- -> unchanged
+    assert _com_object_number("MD-1_M-3_MI-1_O-2-23") == "MD-1_M-3_MI-1_O-2-23"
+
+
+class _QualCtx(_Ctx):
+    """A context whose qualify() prefixes a module-instance id, like ModuleState in a module scope."""
+
+    def qualify(self, ref_id: str) -> str:
+        return f"MOD_{ref_id}"
+
+    def qualify_local(self, ref_id: str) -> str:
+        return f"MOD_{ref_id}"  # module scope: a module-local gate gets the instance prefix
+
+
+def test_choose_pushes_qualified_gate_for_module_scope() -> None:
+    """Choose pushes the INSTANCE-QUALIFIED gate id so the chain matches the qualified ids that
+    active_param_refs() returns for module scopes (regression: module-gated objects in the active set)."""
+    node = ChooseWhenNode("P", {"1": [_CoLeaf("co")]}, None)
+    cap = EvalCapture(None)
+    node.eval(_QualCtx({"P": "1"}, cap))  # type: ignore[arg-type]
+    # gate recorded qualified, so the chain-AND matches only the qualified active set
+    assert cap.chains["co"] == [frozenset({"MOD_P"})]
+    assert cap.active_ref_ids(frozenset({"MOD_P"})) == {"co"}
+    assert cap.active_ref_ids(frozenset({"P"})) == set()  # unqualified would NOT match

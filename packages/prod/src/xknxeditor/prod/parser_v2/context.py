@@ -68,7 +68,7 @@ class EvalContext:
     Reads fall through the state's parent chain (submodule → module → global); writes hit only the active state.
     """
 
-    __slots__ = ("_capture", "_idx", "_repeat_idx", "_scope")
+    __slots__ = ("_capture", "_idx", "_repeat_idx", "_scope", "_union_suppress")
 
     def __init__(
         self,
@@ -76,21 +76,35 @@ class EvalContext:
         repeat_idx: int = 1,
         idx: ApplicationIndexer | None = None,
         capture: EvalCapture | None = None,
+        union_suppress: bool = True,
     ) -> None:
         self._scope = scope
         self._repeat_idx = repeat_idx
         self._idx = idx
         self._capture = capture
+        # False during the union-discovery pass (render both overlapping members so the reached one
+        # is recorded); True during the render pass (suppress the inactive overlay).
+        self._union_suppress = union_suppress
 
     @property
     def capture(self) -> EvalCapture | None:
         return self._capture
+
+    @property
+    def union_suppress(self) -> bool:
+        return self._union_suppress
+
+    def is_discovered_active(self, ref_id: str) -> bool:
+        return self._scope.is_discovered_active(ref_id)
 
     def get(self, ref_id: str) -> str | None:
         return self._scope.get(ref_id)
 
     def qualify(self, ref_id: str) -> str:
         return self._scope.qualify(ref_id)
+
+    def qualify_local(self, ref_id: str) -> str:
+        return self._scope.qualify_local(ref_id)
 
     def set(self, ref_id: str, value: str) -> None:
         self._scope.set(ref_id, value)
@@ -138,7 +152,9 @@ class EvalContext:
         return self._repeat_idx
 
     def repeat_ctx(self, repeat_idx: int) -> EvalContext:
-        return EvalContext(self._scope, repeat_idx, self._idx, self._capture)
+        return EvalContext(
+            self._scope, repeat_idx, self._idx, self._capture, self._union_suppress
+        )
 
     def get_arg_value(self, ref_id: str) -> int:
         arg = self._scope.get_arg(ref_id)
@@ -166,4 +182,9 @@ class EvalContext:
             arg_defaults=arg_defaults,
             ref_id=ref_id,
         )
-        return EvalContext(ms, idx=self._idx, capture=self._capture)
+        return EvalContext(
+            ms,
+            idx=self._idx,
+            capture=self._capture,
+            union_suppress=self._union_suppress,
+        )

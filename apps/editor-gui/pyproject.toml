@@ -1,6 +1,6 @@
 [project]
 name = "xknxeditor-gui"
-version = "0.1.0"
+dynamic = ["version"]
 description = "XKNX Editor - KNX project editor"
 license = "GPL-2.0-only"
 requires-python = ">=3.13"
@@ -33,6 +33,11 @@ dev = ["pytest", "ruff", "pyright"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Single source of truth for the version: editor_gui.__version__ (bump it there for each release; the
+# packaging metadata, the About screen and the update check all read from it).
+[tool.hatch.version]
+path = "src/editor_gui/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/editor_gui"]

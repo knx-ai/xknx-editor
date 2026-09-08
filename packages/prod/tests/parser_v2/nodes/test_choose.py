@@ -108,3 +108,62 @@ class TestChooseWhenNode:
         assert node.eval(EvalContext(GlobalState({_REF_MODE: "130"}))) == [_UI_A]
         assert node.eval(EvalContext(GlobalState({_REF_MODE: "36"}))) == [_UI_A]
         assert node.eval(EvalContext(GlobalState({_REF_MODE: "99"}))) == []
+
+
+_REF_A = f"{_BASE}_UP-1_R-1"  # a Union member's parameter-ref
+_REF_B = f"{_BASE}_UP-2_R-2"  # its union sibling (same memory overlay)
+
+
+class TestChooseWhenNodeUnionGating:
+    """A Choose on a Union member must render only when it is the ACTIVE overlay. Union members share
+    memory, so both would otherwise match the same shared value and render duplicate content. The
+    active overlay is the member REACHED in the discovery pass (frozen via snapshot_discovered_active);
+    the render pass suppresses a member that was not reached while a sibling was."""
+
+    def test_inactive_union_member_renders_nothing_when_sibling_reached(self):
+        node = ChooseWhenNode(_REF_A, {"0": [UiLeaf(_UI_A)]}, None, None, {_REF_B})
+        state = GlobalState({_REF_A: "0", _REF_B: "0"})
+        state.mark_active_param(_REF_B)  # the sibling was reached in discovery...
+        state.snapshot_discovered_active()  # ...frozen as the discovery result
+        assert node.eval(EvalContext(state)) == []
+
+    def test_active_union_member_renders_normally(self):
+        node = ChooseWhenNode(_REF_A, {"0": [UiLeaf(_UI_A)]}, None, None, {_REF_B})
+        state = GlobalState({_REF_A: "0", _REF_B: "0"})
+        state.mark_active_param(_REF_A)  # this member was reached in discovery
+        state.snapshot_discovered_active()
+        assert node.eval(EvalContext(state)) == [_UI_A]
+
+    def test_no_sibling_reached_renders_normally(self):
+        # Neither member reached in discovery -> do not suppress.
+        node = ChooseWhenNode(_REF_A, {"0": [UiLeaf(_UI_A)]}, None, None, {_REF_B})
+        assert node.eval(EvalContext(GlobalState({_REF_A: "0"}))) == [_UI_A]
+
+    def test_discovery_pass_never_suppresses(self):
+        # During discovery (union_suppress=False) both members render even when a sibling is already
+        # marked active, so the reached member is recorded regardless of eval order.
+        node = ChooseWhenNode(_REF_A, {"0": [UiLeaf(_UI_A)]}, None, None, {_REF_B})
+        state = GlobalState({_REF_A: "0", _REF_B: "0"})
+        state.mark_active_param(_REF_B)
+        state.snapshot_discovered_active()
+        assert node.eval(EvalContext(state, union_suppress=False)) == [_UI_A]
+
+    def test_stale_explicit_sibling_does_not_suppress_reached_member(self):
+        # Fresh-activation regression: the sibling carries a stale explicit value (imported for an
+        # inactive branch), but THIS member is the one reached under the current values. The active
+        # overlay is decided by the discovery result, not by which member has an explicit value, so
+        # this member must render (a freshly-activated function's secondary object is not dropped).
+        node = ChooseWhenNode(_REF_A, {"0": [UiLeaf(_UI_A)]}, None, None, {_REF_B})
+        state = GlobalState({_REF_A: "0"})
+        state.set(_REF_B, "0")  # sibling has an explicit value but is NOT reached
+        state.mark_active_param(_REF_A)  # only this member reached in discovery
+        state.snapshot_discovered_active()
+        assert node.eval(EvalContext(state)) == [_UI_A]
+
+    def test_non_union_choose_unaffected(self):
+        # No union siblings -> a plain Choose ignores discovery state entirely.
+        node = ChooseWhenNode(_REF_MODE, {"1": [UiLeaf(_UI_A)]}, None)
+        state = GlobalState({_REF_MODE: "1"})
+        state.mark_active_param(_REF_A)
+        state.snapshot_discovered_active()
+        assert node.eval(EvalContext(state)) == [_UI_A]

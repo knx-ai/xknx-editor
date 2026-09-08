@@ -6,6 +6,7 @@ from xknxeditor.namespaces.intermediate import (
     ApplicationProgram,
     ApplicationProgramChannel,
     ApplicationProgramDynamic,
+    ApplicationProgramStaticParametersUnion,
     Assign,
     BinaryDataRef,
     Button,
@@ -18,6 +19,7 @@ from xknxeditor.namespaces.intermediate import (
     DependentChannelChoose,
     Module,
     ModuleArg,
+    ModuleDefStaticParametersUnion,
     ModuleInstance,
     ParameterInstanceRef,
     ParameterRefRef,
@@ -125,6 +127,12 @@ class DynamicTreeBuilder:
         # active, so it must not gate the capture chain (would wrongly disqualify every object under it).
         # This set is shared by reference into the Choose/Repeat nodes and is complete once _build ends.
         self._widget_param_refs: set[str] = set()
+        # Union members share the same memory offset; only one is the "active" overlay at a time.
+        # Map each of a union member's parameter-refs to its union siblings' parameter-refs, so a
+        # Choose on an inactive union member renders nothing (see ChooseWhenNode). Without this we
+        # render every union member's Choose branch, duplicating content (issue: MDT Glas push
+        # button "Display mode" — two ViewMode union members both rendered).
+        self._union_sibling_refs: dict[str, set[str]] = self._build_union_sibling_refs(app)
         # Some applications (e.g. simple power supplies / couplers) carry no <Dynamic> section, or
         # one that produces no tree. Such a device has no parameters/objects to show — build an
         # empty tree so it still appears in the project instead of failing to load.
@@ -135,6 +143,84 @@ class DynamicTreeBuilder:
             app.static.parameter_refs, self.idx
         )
         self.tree: DynamicNode = _AppNode(node, global_param_ref_defaults)
+
+    def _build_union_sibling_refs(self, app: ApplicationProgram) -> dict[str, set[str]]:
+        """``parameter_ref_id -> the parameter-ref ids that compete with it for the same union memory``.
+
+        Union members overlay shared memory; only the *active* overlay's Choose should render (else
+        both members render, duplicating content — MDT Glas push button "Display mode"). Two members
+        of the same Union compete only when their bit ranges OVERLAP — that is how KNX memory-overlays
+        are mutually exclusive; members at disjoint offsets are independent sub-fields that can be
+        active simultaneously (so they must NOT suppress each other). Multiple ParameterRefs to the
+        SAME member are *aliases*, not competitors, so a ref never lists another ref of its own
+        member. Covers both application-level and module-definition unions."""
+        # member id -> (union key, start_bit, size_bits or None if unknown)
+        members: dict[str, tuple[int, int, int | None]] = {}
+
+        def _add_union(union: object, key: int) -> None:
+            for up in getattr(union, "parameter", []):
+                start = (getattr(up, "offset", 0) or 0) * 8 + (
+                    getattr(up, "bit_offset", 0) or 0
+                )
+                size: int | None = None
+                pt_id = getattr(up, "parameter_type", None)
+                pt = self.idx.parameter_types.get(pt_id) if pt_id else None
+                choice = getattr(pt, "choice", None) if pt is not None else None
+                if choice is not None:
+                    size = getattr(choice, "size_in_bit", None)
+                members[up.id] = (key, start, size)
+
+        params = app.static.parameters
+        if params is not None:
+            for p in params.choice:
+                if isinstance(p, ApplicationProgramStaticParametersUnion):
+                    _add_union(p, id(p))
+        for md in self.idx.module_defs.values():
+            mstatic = getattr(md, "static", None)
+            mparams = getattr(mstatic, "parameters", None) if mstatic else None
+            if mparams is not None:
+                for p in mparams.choice:
+                    if isinstance(p, ModuleDefStaticParametersUnion):
+                        _add_union(p, id(p))
+        if not members:
+            return {}
+
+        # member id -> its parameter-ref ids
+        member_refs: dict[str, set[str]] = {}
+        for pr in self.idx.parameter_refs.values():
+            if pr.ref_id in members:  # pr.ref_id is the underlying member id
+                member_refs.setdefault(pr.ref_id, set()).add(pr.id)
+        by_union: dict[int, list[str]] = {}
+        for mid, (key, _s, _z) in members.items():
+            by_union.setdefault(key, []).append(mid)
+
+        def _overlap(a: str, b: str) -> bool:
+            _k1, s1, z1 = members[a]
+            _k2, s2, z2 = members[b]
+            # Unknown size (e.g. a value type whose width is implicit/encoding-derived, like a
+            # float): compete only when the start bit is identical. Conservative on purpose — this
+            # can miss a genuine overlap (two overlapping members both render = duplicate content),
+            # but it never over-suppresses (never hides an active member). Under-suppression is the
+            # safe failure mode; guessing an implicit width could wrongly hide content.
+            if z1 is None or z2 is None:
+                return s1 == s2
+            return s1 < s2 + z2 and s2 < s1 + z1
+
+        result: dict[str, set[str]] = {}
+        for mids in by_union.values():
+            for m in mids:
+                if m not in member_refs:
+                    continue
+                competitors = {
+                    r
+                    for m2 in mids
+                    if m2 != m and m2 in member_refs and _overlap(m, m2)
+                    for r in member_refs[m2]
+                }
+                if competitors:
+                    for r in member_refs[m]:
+                        result[r] = competitors
+        return result
 
     def _build(self, elem: object) -> DynamicNode | None:
         if isinstance(elem, ApplicationProgramDynamic):
@@ -191,6 +277,7 @@ class DynamicTreeBuilder:
                 condition_to_nodes,
                 default_nodes,
                 self._widget_param_refs,
+                self._union_sibling_refs.get(elem.param_ref_id),
             )
         elif isinstance(elem, Repeat):
             # TODO: index substitution for non-Module children still missing
@@ -262,8 +349,28 @@ class DynamicTreeBuilder:
         return None
 
 
-def _subtree_activeness(node: UiNode, instantiated: set[str]) -> tuple[bool, bool]:
-    """Return ``(has_com_object, has_instantiated_com_object)`` for ``node``'s subtree."""
+def _com_object_number(ref_id: str) -> str:
+    """A com-object ref canonicalized by dropping ONLY the terminal ComObjectRef qualifier
+    (``_R-<m>``), while preserving any module-instance path (``MD-…_M-…_MI-…_O-…``).
+
+    Two refs of the SAME object differ only in ``R-``; the imported instance and the parameter-driven
+    derivation can pick a different ``R-`` for one object (e.g. after a channel is deactivated and
+    re-activated), so section activeness is matched on this identity, not the full ref. Stripping
+    ONLY the terminal ``_R-<m>`` (not down to ``O-<n>``) keeps distinct module instances distinct —
+    otherwise one stored ``O-2`` would keep every repeated module instance's ``O-2`` section alive."""
+    head, sep, tail = ref_id.rpartition("_")
+    if sep and tail.startswith("R-"):
+        return head
+    return ref_id
+
+
+def _subtree_activeness(
+    node: UiNode, instantiated: set[str], instantiated_nums: set[str]
+) -> tuple[bool, bool]:
+    """Return ``(has_com_object, has_instantiated_com_object)`` for ``node``'s subtree.
+
+    A subtree com-object counts as instantiated if its full ref matches, OR its ComObject id
+    (``O-<n>``) matches an instantiated object (see :func:`_com_object_number`)."""
     from .ui import UiComObject, UiParameterBlock, UiTab
 
     has_co = has_inst = False
@@ -272,7 +379,10 @@ def _subtree_activeness(node: UiNode, instantiated: set[str]) -> tuple[bool, boo
         current = stack.pop()
         if isinstance(current, UiComObject):
             has_co = True
-            if current.ref_id in instantiated:
+            if (
+                current.ref_id in instantiated
+                or _com_object_number(current.ref_id) in instantiated_nums
+            ):
                 has_inst = True
         elif isinstance(current, (UiTab, UiParameterBlock)):
             stack.extend(current.children)
@@ -297,6 +407,7 @@ def _collect_refs(node: UiNode, params: set[str], cos: set[str]) -> None:
 def _prune_inactive(
     nodes: list[UiNode],
     instantiated: set[str],
+    instantiated_nums: set[str],
     dropped_params: set[str],
     dropped_cos: set[str],
     kept_params: set[str],
@@ -315,13 +426,14 @@ def _prune_inactive(
     result: list[UiNode] = []
     for node in nodes:
         if isinstance(node, (UiTab, UiParameterBlock)):
-            has_co, has_inst = _subtree_activeness(node, instantiated)
+            has_co, has_inst = _subtree_activeness(node, instantiated, instantiated_nums)
             if has_co and not has_inst:
                 _collect_refs(node, dropped_params, dropped_cos)
                 continue
             pruned = _prune_inactive(
                 list(node.children),
                 instantiated,
+                instantiated_nums,
                 dropped_params,
                 dropped_cos,
                 kept_params,
@@ -358,8 +470,21 @@ class DynamicUI:
         )
         self._ui: list[UiNode] | None = None
 
+    def _discover_union_activity(self) -> None:
+        """Discovery pass ahead of a render eval: evaluate the tree WITHOUT union suppression so every
+        reached Union member is marked active, then freeze that as the discovery snapshot. The render
+        pass reads it (is_discovered_active) to pick each Union's active overlay order-independently —
+        the reached member wins, not a sibling carrying a stale explicit value from an inactive
+        branch (which would drop a freshly-activated member's content)."""
+        self._state.reset_active()
+        self._tree.eval(
+            EvalContext(self._state, idx=self._idx, union_suppress=False)
+        )
+        self._state.snapshot_discovered_active()
+
     def ui(self) -> list[UiNode]:
         if self._ui is None:
+            self._discover_union_activity()
             self._state.reset_active()
             self._ui = self._tree.eval(EvalContext(self._state, idx=self._idx))
             self._state.trim_to_active()
@@ -379,12 +504,19 @@ class DynamicUI:
         instantiated = self._state.com_obj_instance_ref_ids()
         if not instantiated or self._ui is None:
             return
+        instantiated_nums = {_com_object_number(r) for r in instantiated}
         dropped_params: set[str] = set()
         dropped_cos: set[str] = set()
         kept_params: set[str] = set()
         kept_cos: set[str] = set()
         self._ui = _prune_inactive(
-            self._ui, instantiated, dropped_params, dropped_cos, kept_params, kept_cos
+            self._ui,
+            instantiated,
+            instantiated_nums,
+            dropped_params,
+            dropped_cos,
+            kept_params,
+            kept_cos,
         )
         # Only deactivate refs that do not also occur in a surviving section.
         self._state.discard_active_refs(
@@ -397,6 +529,7 @@ class DynamicUI:
         com-object set — ``_prune_inactive_channels`` biases toward the stale saved instances, so it
         must be skipped here. Invalidates the cached ``ui()`` so the next call recomputes (and
         re-prunes) cleanly."""
+        self._discover_union_activity()
         self._state.reset_active()
         tree = self._tree.eval(EvalContext(self._state, idx=self._idx))
         self._state.trim_to_active()
@@ -408,6 +541,7 @@ class DynamicUI:
         parameter value: every com-object emitted under a Choose/Repeat driven by that parameter.
         Invalidates the cached ``ui()`` so the next call recomputes cleanly."""
         capture = EvalCapture(param_ref_id)
+        self._discover_union_activity()
         self._state.reset_active()
         self._tree.eval(EvalContext(self._state, idx=self._idx, capture=capture))
         self._state.trim_to_active()
@@ -426,6 +560,7 @@ class DynamicUI:
         individual channel whose objects sit under an outer selector that is NOT active because its
         widget only lives in a different function branch. Invalidates the cached ``ui()``."""
         capture = EvalCapture(None)  # record every emitted object's gate chain
+        self._discover_union_activity()
         self._state.reset_active()
         self._tree.eval(EvalContext(self._state, idx=self._idx, capture=capture))
         self._state.trim_to_active()

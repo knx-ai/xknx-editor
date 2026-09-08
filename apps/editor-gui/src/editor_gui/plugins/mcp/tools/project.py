@@ -129,6 +129,30 @@ def _collect_ui_parameters(nodes: Any) -> list[Any]:
     return result
 
 
+def _ui_node(node: Any) -> dict[str, Any]:
+    """One node of the device UI tree as a dict, preserving group nesting (tabs/blocks -> children).
+
+    Parameters carry the full _parameter_dict; groups carry their heading and children; separators are
+    dropped. Lets a caller see which parameters belong to a channel / button pair / level."""
+    from xknxeditor.prod.parser_v2.ui import UiParameter, UiParameterBlock, UiTab
+
+    if isinstance(node, UiParameter):
+        return {"kind": "parameter", **_parameter_dict(node)}
+    if isinstance(node, (UiTab, UiParameterBlock)):
+        heading = getattr(node, "text", None) or getattr(node, "name", None)
+        children = [
+            d
+            for ch in node.children
+            if (d := _ui_node(ch)).get("kind") != "separator"
+        ]
+        return {
+            "kind": "tab" if isinstance(node, UiTab) else "block",
+            "name": heading,
+            "children": children,
+        }
+    return {"kind": type(node).__name__.removeprefix("Ui").lower()}
+
+
 def register(mcp: FastMCP, ctx: McpContext) -> None:
     tool = make_tool(mcp, ctx)
     project = ctx.api.project
@@ -258,7 +282,9 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
             )
             from xknxeditor.proj import export_knxproj
 
-            source = project.path
+            # Export READS the SQLite file, so use the working copy (a network project's home file
+            # is only current after a write-back).
+            source = project.working_path
             if source is None:
                 raise ToolError("no project is open")
             bundle = collect_manufacturer_bundle(
@@ -372,6 +398,42 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         return ctx.run_locked(_read)
 
     @tool
+    def project_get_com_object_links(
+        node_id: int, com_object_ref_id: str
+    ) -> dict[str, Any]:
+        """The group addresses a device's com-object is linked to (reverse of
+        project_get_ga_assignments). Use it to trace what a button/sensor object actually controls.
+
+        Each item: ``assignment_id`` (to unlink), ``group_address_id``, ``address``, ``name``,
+        ``is_sending``. Empty if the com-object is not instantiated (db_id None) or has no links."""
+
+        def _read() -> list[dict[str, Any]]:
+            device = _require_device(node_id)
+            co = device.find_com_object(com_object_ref_id)
+            if co is None:
+                raise ToolError(
+                    f"no com-object {com_object_ref_id!r} on device {node_id}; "
+                    "call project_list_com_objects for valid ref_ids"
+                )
+            if co.db_id is None:
+                return []
+            links: list[dict[str, Any]] = []
+            for a in project.get_links_for_com_object(co.db_id):
+                g = project.get_group_address(a.group_address_id)
+                links.append(
+                    {
+                        "assignment_id": a.id,
+                        "group_address_id": a.group_address_id,
+                        "address": g.address if g else None,
+                        "name": g.name if g else None,
+                        "is_sending": a.is_sending,
+                    }
+                )
+            return links
+
+        return _items(ctx.run_locked(_read))
+
+    @tool
     def project_list_parameters(node_id: int) -> dict[str, Any]:
         """A device's visible application parameters with current value, default, and allowed values.
 
@@ -380,6 +442,22 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         def _read() -> list[dict[str, Any]]:
             device = _require_device(node_id)
             return [_parameter_dict(p) for p in _collect_ui_parameters(device.get_ui())]
+
+        return _items(ctx.run_locked(_read))
+
+    @tool
+    def project_parameter_tree(node_id: int) -> dict[str, Any]:
+        """A device's parameters as the NESTED UI tree (tabs -> blocks -> parameters), keeping the
+        headings that project_list_parameters flattens away.
+
+        Use this when the flat list is ambiguous — e.g. to see which parameters belong to a specific
+        channel, button pair, or display level, because the same label ("Two-button function") repeats
+        per slot and only its enclosing group tells them apart. Each parameter node carries the same
+        fields as project_list_parameters (ref_id, label, value, widget)."""
+
+        def _read() -> list[dict[str, Any]]:
+            device = _require_device(node_id)
+            return [_ui_node(n) for n in device.get_ui()]
 
         return _items(ctx.run_locked(_read))
 
@@ -438,18 +516,36 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
 
     @tool
     def project_get_ga_assignments(group_address_id: int) -> dict[str, Any]:
-        """Com-object links of a group address. ``com_object_db_id`` matches a com-object's db_id."""
+        """Com-object links of a group address, each resolved to its owning device.
+
+        Lets you trace a group address back to the devices on it: every item carries the device
+        (``node_id``, ``individual_address``) and the com-object (``com_object_ref_id``,
+        ``com_object_name``, ``com_object_db_id``) plus ``is_sending``."""
 
         def _read() -> list[dict[str, Any]]:
-            return [
-                {
-                    "id": a.id,
-                    "com_object_db_id": a.com_object_id,
-                    "group_address_id": a.group_address_id,
-                    "is_sending": a.is_sending,
-                }
-                for a in project.get_assignments_for_ga(group_address_id)
-            ]
+            # map com-object db_id -> (device, com-object) so each assignment can name its owner
+            owner: dict[int, tuple[Device, ComObject]] = {}
+            for dev in project.devices:
+                for co in dev.get_visible_com_objects():
+                    if co.db_id is not None:
+                        owner[co.db_id] = (dev, co)
+            result: list[dict[str, Any]] = []
+            for a in project.get_assignments_for_ga(group_address_id):
+                dev_co = owner.get(a.com_object_id)
+                dev, co = dev_co if dev_co else (None, None)
+                result.append(
+                    {
+                        "id": a.id,
+                        "com_object_db_id": a.com_object_id,
+                        "group_address_id": a.group_address_id,
+                        "is_sending": a.is_sending,
+                        "node_id": dev.node_id if dev else None,
+                        "individual_address": dev.individual_address if dev else None,
+                        "com_object_ref_id": co.id if co else None,
+                        "com_object_name": co.name if co else None,
+                    }
+                )
+            return result
 
         return _items(ctx.run_locked(_read))
 
@@ -588,6 +684,13 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         node_id: int, parameter_ref_id: str, value: str
     ) -> dict[str, Any]:
         """Set an application parameter. Discover ref_id and allowed values via project_list_parameters.
+
+        When you configure a device's push-button / display function (e.g. a glass push button, room
+        controller), ALWAYS also set its display symbols and key labels/name — do not leave them at
+        their defaults. Mirror an equivalent function on another button or device (read it with
+        project_parameter_tree and copy the symbol/label parameter values), or choose fitting symbols
+        yourself. Setting a function type usually reveals extra symbol/label parameters; re-read the
+        block with project_parameter_tree and set them too, so the button shows correctly on the device.
 
         Returns the parameter's ref_id and resulting value."""
 

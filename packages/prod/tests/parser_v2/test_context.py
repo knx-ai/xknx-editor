@@ -316,6 +316,125 @@ class TestSetInstanceRef:
         assert state.param_ref_id_to_value[_QUALIFIED_REF] == "5"
 
 
+_REF_ACT = f"{_BASE}_P-10_R-10"  # activation param (e.g. "Tastenpaar = aktiv")
+_REF_FUNC = f"{_BASE}_P-11_R-11"  # function-type param inside the gated block
+_OBJ_IMPORTED = f"{_BASE}_P-12_R-12"  # object of the imported branch (e.g. R-1980)
+_OBJ_DEFAULT = f"{_BASE}_P-13_R-13"  # object of the static-default branch (e.g. R-1266)
+
+
+class TestReactivateRetainsImportedValue:
+    """Regression: reactivating a deactivated, parameter-gated block must reselect the SAME branch
+    it was imported with, not the static default.
+
+    At the state/eval level: an activation param gates a block; inside it a Choose on a
+    function-type param selects the object.
+    Deactivating trims the function value out of the active map; without the durable known-value
+    store, reactivation resolves the function param to its default and picks a DIFFERENT branch
+    (a different ComObjectRef, e.g. R-1266 instead of R-1980)."""
+
+    def _tree(self) -> tuple[DynamicNode, DynamicNode]:
+        # func_choose emits the imported-branch object for value "temp", else the default-branch one.
+        func_choose = ChooseWhenNode(
+            _REF_FUNC,
+            {"temp": [_ParamLeaf(_REF_FUNC), _ParamLeaf(_OBJ_IMPORTED)]},
+            default_nodes=[_ParamLeaf(_REF_FUNC), _ParamLeaf(_OBJ_DEFAULT)],
+        )
+        # The activation widget is always rendered; the block only when it is "1".
+        act_leaf = _ParamLeaf(_REF_ACT)
+        block = ChooseWhenNode(_REF_ACT, {"1": [func_choose]}, default_nodes=None)
+        return act_leaf, block
+
+    def _cycle(self, state: GlobalState, nodes: tuple[DynamicNode, DynamicNode]) -> None:
+        state.reset_active()
+        ctx = EvalContext(state)
+        for node in nodes:
+            node.eval(ctx)
+        state.trim_to_active()
+
+    def test_reactivation_reselects_imported_branch(self) -> None:
+        # Imported active: activation "1", function "temp".
+        state = GlobalState.from_project(
+            [
+                ParameterInstanceRef(ref_id=_REF_ACT, value="1"),
+                ParameterInstanceRef(ref_id=_REF_FUNC, value="temp"),
+            ]
+        )
+        nodes = self._tree()
+
+        self._cycle(state, nodes)  # import: imported branch active
+        assert _OBJ_IMPORTED in state.active_param_refs()
+
+        state.set(_REF_ACT, "0")  # deactivate -> block gone, func value trimmed from active map
+        self._cycle(state, nodes)
+        assert _REF_FUNC not in state.param_ref_id_to_value  # trimmed while inactive
+
+        state.set(_REF_ACT, "1")  # reactivate
+        self._cycle(state, nodes)
+        # The imported function value must survive and reselect the imported branch, NOT the default.
+        assert _OBJ_IMPORTED in state.active_param_refs()
+        assert _OBJ_DEFAULT not in state.active_param_refs()
+
+
+class TestKnownValueStore:
+    def test_get_survives_trim_for_inactive_param(self) -> None:
+        state = GlobalState.from_project(
+            [ParameterInstanceRef(ref_id=_REF_TARGET, value="imported")]
+        )
+        state.reset_active()
+        state.trim_to_active()  # _REF_TARGET never marked active -> dropped from active map
+        assert _REF_TARGET not in state.param_ref_id_to_value
+        assert state.get(_REF_TARGET) == "imported"  # ...but still resolvable
+        assert state.has_explicit_param(_REF_TARGET) is True
+
+    def test_default_only_param_is_not_explicit(self) -> None:
+        state = GlobalState(param_ref_defaults={_REF_TARGET: "5"})
+        assert state.get(_REF_TARGET) == "5"
+        assert state.has_explicit_param(_REF_TARGET) is False
+
+    def test_clear_instance_ref_drops_known_value(self) -> None:
+        state = GlobalState.from_project(
+            [ParameterInstanceRef(ref_id=_REF_TARGET, value="imported")]
+        )
+        state.clear_instance_ref(_REF_TARGET)
+        assert state.has_explicit_param(_REF_TARGET) is False
+        assert state.get(_REF_TARGET) is None
+
+
+_REF_UA = f"{_BASE}_P-20_R-20"  # union member A
+_REF_UB = f"{_BASE}_P-21_R-21"  # union member B (shares memory with A)
+
+
+class TestUnionSuppressionIsOrderIndependent:
+    """The inactive overlay of a Union must render nothing regardless of node evaluation order.
+
+    The active overlay is the member REACHED in the discovery pass (frozen via
+    snapshot_discovered_active); the render pass suppresses the non-reached member no matter which
+    member's Choose runs first, so a freshly-activated member is not dropped because a sibling from
+    an inactive branch still carries a stale explicit value."""
+
+    def _members(self) -> tuple[ChooseWhenNode, ChooseWhenNode]:
+        member_a = ChooseWhenNode(
+            _REF_UA, {"1": [_ParamLeaf(_REF_UA)]}, None, union_sibling_refs={_REF_UB}
+        )
+        member_b = ChooseWhenNode(
+            _REF_UB, {"1": [_ParamLeaf(_REF_UB)]}, None, union_sibling_refs={_REF_UA}
+        )
+        return member_a, member_b
+
+    def test_inactive_member_suppressed_even_when_evaluated_first(self) -> None:
+        # A is the reached overlay; B is not. Evaluate B FIRST — still suppressed, because discovery
+        # already recorded A as reached.
+        state = GlobalState({_REF_UA: "1", _REF_UB: "1"})
+        state.mark_active_param(_REF_UA)  # only A reached in discovery
+        state.snapshot_discovered_active()
+        member_a, member_b = self._members()
+        ctx = EvalContext(state)
+        assert member_b.eval(ctx) == []  # suppressed by the discovery result, order-independent
+        assert _REF_UB not in state.active_param_refs()
+        member_a.eval(ctx)
+        assert _REF_UA in state.active_param_refs()
+
+
 class TestComObjInstanceRefIds:
     """`com_obj_instance_ref_ids()` exposes the device's instantiated com objects.
 

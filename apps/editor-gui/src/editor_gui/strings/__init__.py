@@ -72,6 +72,27 @@ class BaseStrings:
         )
 
     @property
+    def NETWORK_CONSENT_TITLE(self) -> str:
+        return _("Network location")
+
+    @property
+    def NETWORK_CONSENT_PROMPT(self) -> str:
+        return _(
+            "This location is on a network drive:\n{home}\n\n"
+            "KNX project files use a database that cannot run reliably on network shares. The "
+            "editor can work on a local copy instead and write it back to the network location "
+            "when you close the project."
+        )
+
+    @property
+    def NETWORK_CONSENT_USE_LOCAL(self) -> str:
+        return _("Use a local copy")
+
+    @property
+    def MIRROR_NOTICE(self) -> str:
+        return _("Working on a local copy; written back to {home} when you close the project.")
+
+    @property
     def BTN_ADD(self) -> str:
         return _("Add")
 

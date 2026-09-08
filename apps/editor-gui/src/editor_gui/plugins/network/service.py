@@ -15,8 +15,9 @@ if TYPE_CHECKING:
 
 # Bounded scrollback of the capture. Without a cap these lists grew for the whole session (~2 GB
 # after a day of live capture); the network monitor is a live diagnostic view, so keep the most
-# recent frames and drop older ones (export for longer captures).
-_RECORD_LOG_MAX = 10_000
+# recent frames and drop older ones (export for longer captures). 100k small records is a few tens
+# of MB; ListClipper keeps the per-frame render cost independent of this size.
+_RECORD_LOG_MAX = 100_000
 
 
 class CaptureState(Enum):

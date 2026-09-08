@@ -1,7 +1,10 @@
 """GUI project facade: lazy device view over ProjectService with selection and pub/sub."""
 
+import hashlib
 import os
+import platform
 import shutil
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,12 +13,13 @@ from typing import TYPE_CHECKING, Any
 from editor_gui.concurrency import io_guarded
 from editor_gui.device import Device
 from editor_gui.plugins.project.ui.history import HistoryEntry
+from editor_gui.settings import config_dir
 from xknxeditor.namespaces.intermediate import ComObjectInstanceRef
 from xknxeditor.namespaces.intermediate.enable_t import Enable
 from xknxeditor.prod import Application
 from xknxeditor.prod.app_id import parse_app_id
 from xknxeditor.proj import ProjectService as _ProjectService
-from xknxeditor.proj import ensure_sqlite_writable
+from xknxeditor.proj import ProjectStorageError, ensure_sqlite_writable
 from xknxeditor.proj import import_knxproj as _import_knxproj
 from xknxeditor.proj.core.addressing import GroupAddressStyle, parse_ga
 
@@ -242,7 +246,12 @@ class ProjectService:
         self._io_lock = catalog.io_lock
         self._svc = _ProjectService()
         self._pid: str | None = None
+        # ``_path`` is the user-facing "home" (may be on a network share). ``_working_path`` is the
+        # local file the SQLite engine actually uses; equal to ``_path`` for a normal local project.
+        # They differ only in the SMB/network fallback: the engine works on a local mirror and the
+        # file is written back to ``_path`` on close/switch/exit (see _teardown_current).
         self._path: Path | None = None
+        self._working_path: Path | None = None
         self._log: Logger
         self._listeners: dict[str, list[Callable[..., Any]]] = {}
         self._app_cache: dict[str, Application] = {}
@@ -301,7 +310,209 @@ class ProjectService:
 
     @property
     def path(self) -> Path | None:
+        """The user-facing project location (the "home"; may be on a network share). Use this for
+        display, recents and dialogs. To READ the live SQLite file, use :attr:`working_path`."""
         return self._path
+
+    @property
+    def working_path(self) -> Path | None:
+        """The local SQLite file the engine uses — equal to :attr:`path` for a local project, or a
+        local mirror when the home is on a network share. Consumers that OPEN/READ the db file
+        (export) must use this, not :attr:`path`."""
+        return self._working_path
+
+    @property
+    def mirroring_active(self) -> bool:
+        """True when the open project is a network home backed by a local working mirror."""
+        return self._working_path is not None and self._working_path != self._path
+
+    @property
+    def mirror_home(self) -> Path | None:
+        """The network home a mirror is written back to, or ``None`` when not mirroring."""
+        return self._path if self.mirroring_active else None
+
+    def location_needs_local_copy(self, path: Path) -> bool:
+        """Whether ``path`` is a location SQLite can't run on (network share) and would be mirrored.
+
+        The GUI calls this before open/import to ask the user for consent; the mirroring itself
+        happens inside open/import."""
+        return self._needs_mirror(path if path.suffix else path.with_suffix(".xknx"))
+
+    def can_open(self, path: Path) -> bool:
+        """Whether opening ``path`` can succeed — the home file exists, OR a local mirror exists for
+        it (a mirrored project whose home was not yet written back, e.g. after a crash)."""
+        home = path if path.suffix else path.with_suffix(".xknx")
+        return home.is_file() or self._mirror_path(home).exists()
+
+    # Filesystem types that cannot host a reliable live SQLite db (locking is unreliable → hangs or
+    # corruption), even when a quick write probe happens to succeed.
+    _NETWORK_FS = frozenset(
+        {
+            "smbfs",
+            "cifs",
+            "smb3",
+            "nfs",
+            "nfs4",
+            "afpfs",
+            "webdav",
+            "fusefs.sshfs",
+            "osxfuse",
+            "macfuse",
+            "ftp",
+        }
+    )
+
+    def _needs_mirror(self, home: Path) -> bool:
+        """True when ``home`` can't host a live SQLite db → work on a local mirror.
+
+        Two independent signals, OR-ed: (1) the location is a network filesystem (SMB/NFS/…), which
+        is unreliable for SQLite even when a write probe passes — this is the important one, because
+        some SMB mounts accept the probe's create+write but then HANG on real locking; (2) the write
+        probe itself fails (read-only dir, or a mount that rejects writes outright)."""
+        net = self._is_network_fs(home)
+        probe_fail = False
+        if not net:
+            try:
+                ensure_sqlite_writable(home)
+            except ProjectStorageError:
+                probe_fail = True
+        result = net or probe_fail
+        log = getattr(self, "_log", None)
+        if log is not None:
+            log.debug(
+                "mirror decision",
+                home=str(home),
+                network_fs=net,
+                probe_failed=probe_fail,
+                needs_mirror=result,
+            )
+        return result
+
+    @classmethod
+    def _is_network_fs(cls, home: Path) -> bool:
+        """Whether ``home`` lives on a network filesystem. Best-effort per OS; on any error returns
+        False (falls back to the write probe)."""
+        try:
+            target = home if home.exists() else home.parent
+            target = target.resolve(strict=False)
+        except OSError:
+            return False
+        system = platform.system()
+        try:
+            if system == "Windows":
+                return cls._is_network_fs_windows(target)
+            if system == "Darwin":
+                return cls._is_network_fs_darwin(target)
+            return cls._is_network_fs_linux(target)
+        except Exception:
+            return False  # detection is best-effort; the write probe is the fallback
+
+    @staticmethod
+    def _is_network_fs_windows(target: Path) -> bool:
+        import ctypes
+
+        if str(target).startswith("\\\\"):  # UNC path (\\server\share)
+            return True
+        drive = os.path.splitdrive(str(target))[0]
+        if not drive:
+            return False
+        DRIVE_REMOTE = 4
+        return ctypes.windll.kernel32.GetDriveTypeW(f"{drive}\\") == DRIVE_REMOTE  # type: ignore[attr-defined]
+
+    @classmethod
+    def _is_network_fs_darwin(cls, target: Path) -> bool:
+        # Parse `mount`: lines look like "//user@host/share on /Volumes/backup (smbfs, nodev, ...)".
+        out = subprocess.run(
+            ["/sbin/mount"], capture_output=True, text=True, timeout=5
+        ).stdout
+        best_mp = ""
+        best_type = ""
+        s = str(target)
+        for line in out.splitlines():
+            if " on " not in line or "(" not in line:
+                continue
+            mp = line.split(" on ", 1)[1].rsplit(" (", 1)[0]
+            fstype = line.rsplit("(", 1)[1].split(",", 1)[0].strip()
+            if (s == mp or s.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(best_mp):
+                best_mp, best_type = mp, fstype
+        return best_type in cls._NETWORK_FS
+
+    @classmethod
+    def _is_network_fs_linux(cls, target: Path) -> bool:
+        # /proc/self/mountinfo: fstype is after " - "; mountpoint is field 5 (0-based 4).
+        best_mp = ""
+        best_type = ""
+        s = str(target)
+        with open("/proc/self/mountinfo", encoding="utf-8") as f:
+            for line in f:
+                left, _, right = line.partition(" - ")
+                fields = left.split()
+                if len(fields) < 5 or not right:
+                    continue
+                mp = fields[4]
+                fstype = right.split(maxsplit=1)[0]
+                if (s == mp or s.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(best_mp):
+                    best_mp, best_type = mp, fstype
+        return best_type in cls._NETWORK_FS
+
+    @staticmethod
+    def _mirror_dir() -> Path:
+        d = config_dir() / "mirrors"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _mirror_path(self, home: Path) -> Path:
+        """Deterministic local mirror path for a network ``home`` (full resolved path → no collision
+        between same-named files on different shares)."""
+        key = hashlib.sha1(str(home.resolve(strict=False)).encode("utf-8")).hexdigest()
+        return self._mirror_dir() / f"{key}.xknx"
+
+    @staticmethod
+    def _copy_atomic(src: Path, dst: Path) -> None:
+        """Copy ``src`` onto ``dst`` without ever truncating ``dst`` in place: write a sibling temp
+        then ``os.replace`` (atomic same-dir rename), so an interrupted copy can't leave a torn
+        file. Drops a stale ``dst-journal`` so the copied db is never paired with a foreign journal.
+        Used for both seeding a mirror (home→mirror) and writing back (working→home)."""
+        tmp = dst.with_name(f"{dst.name}.writeback-{os.getpid()}.tmp")
+        try:
+            shutil.copyfile(src, tmp)
+            os.replace(tmp, dst)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        Path(f"{dst}-journal").unlink(missing_ok=True)
+
+    def _teardown_current(self) -> None:
+        """End the active project: close the engine, then (if mirroring) write the local working
+        file back to the network home. The single place project teardown happens, so every switch
+        (open/new/import) and app exit writes the mirror back. A write-back failure (share gone) is
+        logged and KEEPS the local mirror — never loses data."""
+        if self._pid is None:
+            return
+        working, home = self._working_path, self._path
+        self._log.debug(
+            "teardown: closing project",
+            home=str(home) if home else None,
+            working=str(working) if working else None,
+            mirroring=working is not None and home is not None and working != home,
+        )
+        self._svc.close(self._pid)
+        if working is not None and home is not None and working != home:
+            self._log.info("writing project back to network location", home=str(home))
+            try:
+                self._copy_atomic(working, home)
+                self._log.info("wrote project back to network location", home=str(home))
+            except OSError as e:
+                self._log.error(
+                    "could not write the project back to its network location; your changes are "
+                    "kept in the local copy",
+                    home=str(home),
+                    working=str(working),
+                    error=f"{type(e).__name__}: {e}",
+                )
+        self._pid = None
+        self._path = None
+        self._working_path = None
+        self._reset()
 
     @staticmethod
     def _remove_project_file(path: Path) -> None:
@@ -311,17 +522,25 @@ class ProjectService:
         Path(f"{path}-journal").unlink(missing_ok=True)
 
     def new(self, path: Path) -> None:
-        if self._pid is not None:
-            self.close()
         if not path.suffix:
             path = path.with_suffix(".xknx")
-        # New project = a fresh file. The save dialog lets the user pick an existing path to
-        # overwrite; without clearing it, create()'s seed collides with the old project's rows
-        # ("UNIQUE constraint failed: installations.index").
-        self._remove_project_file(path)
-        self._pid = self._svc.create(path)
-        self._path = path
-        self._reset()
+        with self._io_lock:
+            self._teardown_current()  # close + write back any previous project first
+            working = self._mirror_path(path) if self._needs_mirror(path) else path
+            # New project = a fresh file. The save dialog lets the user pick an existing path to
+            # overwrite; without clearing the WORKING db, create()'s seed collides with the old
+            # project's rows ("UNIQUE constraint failed: installations.index").
+            self._remove_project_file(working)
+            self._pid = self._svc.create(working)
+            self._path = path
+            self._working_path = working
+            self._reset()
+        if self.mirroring_active:
+            self._log.info(
+                "network location: working on a local copy",
+                home=str(path),
+                working=str(working),
+            )
         self._log.info("project created", path=str(path))
 
     def save_as(self, new_path: Path) -> Path | None:
@@ -331,22 +550,25 @@ class ProjectService:
         current file to the chosen location and re-opens it there — how an auto-named "untitled"
         project (created when the Welcome screen is closed) gets a real, user-chosen home. Returns the
         final path (``.xknx`` suffix ensured), or ``None`` when no project is open."""
-        if self._pid is None or self._path is None:
+        if self._pid is None or self._working_path is None:
             return None
         if not new_path.suffix:
             new_path = new_path.with_suffix(".xknx")
         with self._io_lock:
-            src = self._path
-            # Close first to release the SQLite file (DELETE journal, no open txn), copy the fully
-            # persisted document, then open the copy so edits continue against the new location.
-            self._svc.close(self._pid)
-            self._pid = None
-            self._path = None
-            self._reset()
-            # Overwriting an existing target: drop its stale -journal so the copied db is not paired
-            # with a foreign rollback journal.
-            Path(f"{new_path}-journal").unlink(missing_ok=True)
-            shutil.copyfile(src, new_path)
+            # Snapshot the live (working) file BEFORE teardown; teardown closes the engine (releases
+            # the file/journal) and writes the OLD home back. The live data is in the working file,
+            # not necessarily the home (which is only current after a write-back).
+            src = self._working_path
+            self._teardown_current()
+            working = (
+                self._mirror_path(new_path)
+                if self._needs_mirror(new_path)
+                else new_path
+            )
+            # Replace any stale destination db/mirror so the fresh copy wins (a leftover mirror for
+            # this home must not shadow the just-saved data).
+            self._remove_project_file(working)
+            shutil.copyfile(src, working)
         self.open(new_path)
         self._log.info("project saved as", path=str(new_path))
         return new_path
@@ -355,19 +577,38 @@ class ProjectService:
         # Hold the shared lock for the whole open (incl. the device-view build) so per-frame UI reads
         # on other threads bail to empty placeholders instead of racing it — lets a background open
         # run behind a progress spinner. Re-entrant, so our own nested reads still work.
+        if not path.suffix:
+            path = path.with_suffix(".xknx")
         with self._io_lock:
-            # Open (and thereby validate) the target BEFORE closing the current project, so a
-            # corrupt/invalid file leaves the existing project intact instead of stranding the user.
             self._log.debug("opening project", path=str(path))
-            new_pid = self._svc.open(path)
-            # Re-opening the same file yields the same pid; closing it then would drop the project we
-            # just opened, so only close the previous one when it is a different project.
-            if self._pid is not None and self._pid != new_pid:
-                self._svc.close(self._pid)
+            # Tear down (and write back) the previous project BEFORE opening the new one. Two
+            # different files can carry the same project-id (P-XXXX); the core keys engines by id,
+            # so opening-before-closing could collide and then close the just-opened project. The
+            # trade-off — a corrupt target leaves nothing open — is acceptable for this fallback.
+            self._teardown_current()
+            working = self._mirror_path(path) if self._needs_mirror(path) else path
+            # First open of a network home: seed the local mirror from it. If the home is missing
+            # but a mirror exists (crash before write-back), reuse the mirror as-is (never lose the
+            # unsynced local edits) — that is why we only seed when the mirror is absent.
+            if working != path and not working.exists() and path.is_file():
+                self._log.info(
+                    "seeding local copy from network home",
+                    home=str(path),
+                    working=str(working),
+                )
+                self._copy_atomic(path, working)
+            new_pid = self._svc.open(working)
             self._pid = new_pid
             self._path = path
+            self._working_path = working
             self._reset()
             self._history_baseline = self._history_key()
+            if self.mirroring_active:
+                self._log.info(
+                    "network location: working on a local copy",
+                    home=str(path),
+                    working=str(working),
+                )
             self._log.info("project opened", path=str(path), devices=len(self.devices))
 
     def import_knxproj(
@@ -386,10 +627,11 @@ class ProjectService:
         keeps reading the previous project (stable, no schema mutation) until the swap."""
         if not dest.suffix:
             dest = dest.with_suffix(".xknx")
-        # Fail fast if the destination can't host a SQLite DB (e.g. a network share): otherwise the
-        # heavy catalog ingest + parse below runs first and only then hits "unable to open database
-        # file" mid-DDL. Raises ProjectStorageError with a clear, actionable message.
-        ensure_sqlite_writable(dest)
+        # When ``dest`` is a network share, SQLite can't run there, so import into a local mirror and
+        # write it back to ``dest`` on close (see open/_teardown_current). ``ensure_sqlite_writable``
+        # still guards via make_engine if even the local mirror dir were unusable (never, in
+        # practice — it is config_dir()).
+        working = self._mirror_path(dest) if self._needs_mirror(dest) else dest
         # Hold the shared lock for the whole import so per-frame UI reads on other threads bail to
         # empty placeholders (see editor_gui.concurrency) instead of racing these writes. This method is
         # meant to run on a worker thread; the lock is re-entrant, so our own nested reads still work.
@@ -412,25 +654,22 @@ class ProjectService:
                     source=str(source),
                     error=f"{type(e).__name__}: {e}",
                 )
-            tmp = dest.with_name(f"{dest.name}.import-{os.getpid()}.tmp")
+            tmp = working.with_name(f"{working.name}.import-{os.getpid()}.tmp")
             try:
-                # Parse + write into the temp file. On a wrong password this raises before writing,
-                # so the currently-open project is left untouched.
+                # Parse + write into a sibling temp of the WORKING file (never next to a network
+                # dest). On a wrong password this raises before writing, so the currently-open
+                # project is left untouched.
                 _import_knxproj(source, tmp, password=password)
-                # If we are overwriting the file the live service currently has open, close it first
-                # so no engine holds dest's inode when we replace it (old-inode/new-file + pooled-
-                # connection hazard). A different dest needs no early close — open() closes the old
-                # project after the swap.
+                # If we are overwriting the working file the live service currently has open, tear it
+                # down first so no engine holds its inode when we replace it (old-inode/new-file +
+                # pooled-connection hazard). A different working file needs no early close — open()
+                # tears down the previous project after the swap.
                 if (
-                    self._pid is not None
-                    and self._path is not None
-                    and self._path.resolve() == dest.resolve()
+                    self._working_path is not None
+                    and self._working_path.resolve() == working.resolve()
                 ):
-                    self._svc.close(self._pid)
-                    self._pid = None
-                    self._path = None
-                    self._reset()
-                os.replace(tmp, dest)
+                    self._teardown_current()
+                os.replace(tmp, working)
             finally:
                 # Clean up the temp file if it survived a failure (a successful replace consumed it).
                 Path(tmp).unlink(missing_ok=True)
@@ -439,12 +678,11 @@ class ProjectService:
 
     def close(self) -> None:
         if self._pid is not None:
-            self._svc.close(self._pid)
-            self._pid = None
-            self._path = None
-            self._reset()
-            self._history_baseline = frozenset()
-            self._log.info("project closed")
+            with self._io_lock:
+                # Teardown writes the local working file back to a network home (if mirroring).
+                self._teardown_current()
+                self._history_baseline = frozenset()
+                self._log.info("project closed")
 
     def _reset(self) -> None:
         self._devices_cache = None

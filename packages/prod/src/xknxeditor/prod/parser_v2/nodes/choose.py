@@ -43,6 +43,7 @@ class ChooseWhenNode(DynamicNode):
         condition_to_nodes: dict[str, list[DynamicNode | None]],
         default_nodes: list[DynamicNode | None] | None,
         widget_param_refs: set[str] | None = None,
+        union_sibling_refs: set[str] | None = None,
     ):
         self._param_ref_id = param_ref_id
         self._condition_to_nodes = condition_to_nodes
@@ -52,6 +53,11 @@ class ChooseWhenNode(DynamicNode):
         # can never be active, so it must not be pushed onto the capture chain — otherwise it would
         # disqualify every object under it (chain-AND) even though the branch is genuinely selected.
         self._widget_param_refs = widget_param_refs
+        # If this Choose's parameter is a Union member overlaying shared memory, the parameter-refs
+        # that COMPETE with it (other members at the same offset — aliases of the same member are
+        # excluded). Only the active overlay's Choose should render; a Choose on an inactive member
+        # renders nothing (see eval), else overlapping members both render (duplicate content).
+        self._union_sibling_refs = union_sibling_refs
 
     def _gates_capture(self) -> bool:
         return self._widget_param_refs is None or (
@@ -59,6 +65,19 @@ class ChooseWhenNode(DynamicNode):
         )
 
     def eval(self, ctx: EvalContext) -> list[UiNode]:
+        # Union-member gate: this Choose's parameter shares memory with its siblings, so only the
+        # ACTIVE overlay's content should render (else overlapping members duplicate content). The
+        # active overlay is the member REACHED under the current values, determined order-independently
+        # by a discovery pass (union suppression off) that runs before this render pass. Suppress this
+        # member iff it was not reached but a sibling was. During discovery (union_suppress False) this
+        # is skipped so both members render and the reached one is recorded.
+        if (
+            self._union_sibling_refs
+            and ctx.union_suppress
+            and not ctx.is_discovered_active(self._param_ref_id)
+            and any(ctx.is_discovered_active(sib) for sib in self._union_sibling_refs)
+        ):
+            return []
         value = ctx.get(self._param_ref_id) or ""
         result: list[UiNode] = []
         matched = False
@@ -68,7 +87,13 @@ class ChooseWhenNode(DynamicNode):
         # test (an object is active only if every gate on its path is driven by an active parameter).
         gating = capture is not None and self._gates_capture()
         if gating:
-            capture.push(self._param_ref_id)  # type: ignore[union-attr]
+            # Push the gate id qualified in the scope that OWNS it: a module-local gate becomes
+            # instance-qualified (matching the qualified ids that com-object leaves record and that
+            # ``active_param_refs()`` returns for module scopes), while a gate on an ancestor/app
+            # parameter stays unqualified (it is marked active in the ancestor scope). ``qualify_local``
+            # (not blind ``qualify``) so an inherited gate param is not mis-qualified — otherwise its
+            # com-objects drop from the chain-AND active set. Identity at global scope.
+            capture.push(ctx.qualify_local(self._param_ref_id))  # type: ignore[union-attr]
         try:
             for condition, nodes in self._condition_to_nodes.items():
                 if satisfies(condition, value):

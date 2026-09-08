@@ -166,8 +166,18 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         be on the bus. NEW device (first commissioning): set the address in the project
         (project_set_individual_address), assign it to the device in programming mode
         (connection_assign_individual_address), then program with scope FULL. ALREADY-programmed
-        device: run connection_evaluate_device first to preview the diff. ``scope``: FULL (default)
-        or a partial scope name (see status.capabilities.download_scopes)."""
+        device: run connection_evaluate_device ONCE to preview the diff, then program.
+
+        ``scope`` — pick the one matching what you changed (all scopes run the same load procedure,
+        just filtered, and only changed bytes are written; no scope programs the individual address):
+        - PARAMETERS: parameter values only.
+        - GROUP_COMMUNICATION: group-address links only (address/association/group-object tables).
+        - APPLICATION: parameters + com-object (group-object) table, but NOT the group-address links.
+        - FULL (default): everything = APPLICATION + GROUP_COMMUNICATION. Use when a change touches
+          BOTH the application AND the links (e.g. changing a push-button function type AND relinking
+          its objects) — no single partial scope covers both — or when unsure. Not heavier than the
+          partials (same procedure, delta writes), it just does not re-flash firmware or the address.
+        - UNLOAD: remove the application (reset the device to unloaded)."""
         device, group_communication = _programmable_device(node_id)
         future = service.program_device(
             device, _resolve_scope(scope), group_communication

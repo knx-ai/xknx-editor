@@ -22,6 +22,7 @@ from xknxproject.exceptions import InvalidPasswordException, XknxProjectExceptio
 
 from editor_gui import __version__
 from editor_gui import signing_key as signing_key_store
+from editor_gui.certs import ensure_ca_bundle
 from editor_gui.concurrency import MainThreadExecutor
 from editor_gui.master_data import MasterDataInfo, load_master, master_xml_bytes
 from editor_gui.plugins.base import API_VERSION, Logger, PanelDefinition, PluginAPI
@@ -170,6 +171,11 @@ class KnxGuiApp:
         self._password_prompt_requested = False
         self._import_password = ""
         self._import_password_error: str | None = None
+        # Network-drive consent: when opening/importing to a location SQLite can't use (SMB/NFS), we
+        # ask before working on a local copy. `_action` runs on "Use local copy"; `_home` is shown.
+        self._network_consent_requested = False
+        self._network_consent_home: str | None = None
+        self._network_consent_action: Callable[[], None] | None = None
         # "Load product from URL" prompt (imports a .knxprod / OpenKNX release / product XML).
         self._url_prompt_requested = False
         self._url_input = ""
@@ -201,6 +207,9 @@ class KnxGuiApp:
         self._toast_seen_ts = time.time()
         # Set by the export worker on success; the toast renderer turns it into a green toast.
         self._export_success_msg: str | None = None
+        # Set by the open/import worker when a network project is mirrored locally; the toast
+        # renderer turns it into an info toast on the UI thread.
+        self._mirror_notice: str | None = None
         self._welcome_dismissed = False  # user closed the welcome card this session
         self._about_requested = False
         # GitHub update check (best-effort, off the UI thread; see update_check.py).
@@ -431,7 +440,9 @@ class KnxGuiApp:
         When ``signer`` is given (the MyKnx certificate signer), the export also requests a project
         certificate and embeds it. Runs off the UI thread because signing does blocking network I/O.
         """
-        source = self._project_service.path
+        # Export READS the SQLite file, so use the working copy — for a network project the home
+        # file is only current after a write-back, and reading it directly could be stale or fail.
+        source = self._project_service.working_path
         if source is None or (self._myknx_thread and self._myknx_thread.is_alive()):
             return
         # Snapshot the program refs now (UI thread) together with `source`, so switching projects
@@ -721,7 +732,8 @@ class KnxGuiApp:
     def _do_import_knxproj(self, source: str, dest: str) -> None:
         self._import_knxproj_source = source
         self._import_knxproj_dest = dest
-        self._start_import(None)
+        # A network destination asks for consent (work on a local copy) before the import runs.
+        self._maybe_consent_then(dest, lambda: self._start_import(None))
 
     def _start_import(self, password: str | None) -> None:
         """Run the import on a worker thread so the UI stays responsive (the facade holds the shared
@@ -845,6 +857,8 @@ class KnxGuiApp:
             )
             # Import opens the freshly built .xknx; record it in Open Recent like a normal open.
             self._add_recent(dest)
+            if self._project_service.mirroring_active:
+                self._mirror_notice = str(self._project_service.mirror_home)
         except InvalidPasswordException:
             return True
         except ProjectStorageError as e:
@@ -893,6 +907,42 @@ class KnxGuiApp:
             self._start_import(self._import_password)
         elif cancel:
             self._clear_import_prompt()
+            imgui.close_current_popup()
+        imgui.end_popup()
+
+    def _maybe_consent_then(self, home: str, action: Callable[[], None]) -> None:
+        """Run ``action`` now, or — if ``home`` is a location SQLite can't use (network share) —
+        ask the user first and run it only on consent. The mirroring itself happens in the facade."""
+        if self._project_service.location_needs_local_copy(Path(home)):
+            self._network_consent_home = home
+            self._network_consent_action = action
+            self._network_consent_requested = True
+        else:
+            action()
+
+    def _render_network_consent_modal(self) -> None:
+        if self._network_consent_requested:
+            imgui.open_popup(S.NETWORK_CONSENT_TITLE)
+            self._network_consent_requested = False
+        imgui.set_next_window_size(imgui.ImVec2(460.0, 0.0), imgui.Cond_.always)
+        if not imgui.begin_popup_modal(S.NETWORK_CONSENT_TITLE, None)[0]:
+            return
+        imgui.text_wrapped(
+            S.NETWORK_CONSENT_PROMPT.format(home=self._network_consent_home or "")
+        )
+        imgui.spacing()
+        use_local = imgui.button(S.NETWORK_CONSENT_USE_LOCAL)
+        imgui.same_line()
+        cancel = imgui.button(S.BTN_CANCEL)
+        if use_local:
+            action = self._network_consent_action
+            self._network_consent_action = None
+            imgui.close_current_popup()
+            if action is not None:
+                action()
+        elif cancel:
+            self._network_consent_action = None
+            self._clear_import_prompt()  # harmless when opening (import fields are None)
             imgui.close_current_popup()
         imgui.end_popup()
 
@@ -992,8 +1042,9 @@ class KnxGuiApp:
 
         # A recent entry (or a startup default) may point at a file that was moved or deleted. Report
         # it clearly (a red toast via the error log) and drop it from the recent list, instead of
-        # failing later on the opaque SQLite "unable to open database file" error.
-        if not Path(path).is_file():
+        # failing later on the opaque SQLite "unable to open database file" error. can_open() also
+        # accepts a network home whose file is missing but has a local mirror (crash recovery).
+        if not self._project_service.can_open(Path(path)):
             self._log.error("project file no longer exists", path=path)
             self._remove_recent(path)
             return
@@ -1010,6 +1061,8 @@ class KnxGuiApp:
             try:
                 self._project_service.open(Path(path))
                 self._add_recent(path)
+                if self._project_service.mirroring_active:
+                    self._mirror_notice = str(self._project_service.mirror_home)
             except ProjectStorageError as e:
                 # The file lives somewhere SQLite can't operate (network share, read-only dir).
                 self._log.error("Cannot open the project here", path=path, error=str(e))
@@ -1021,7 +1074,8 @@ class KnxGuiApp:
                 self._project_service.build_progress = None
 
         # Open on a worker thread behind the spinner: building a large project's device view is slow.
-        self._run_bg(S.PROGRESS_OPEN_PROJECT, worker)
+        # A network location asks for consent first (work on a local copy), then runs the worker.
+        self._maybe_consent_then(path, lambda: self._run_bg(S.PROGRESS_OPEN_PROJECT, worker))
 
     def _prompt_import_dest(self, source: str) -> None:
         """Remember the .knxproj source and ask where to save the imported .xknx project."""
@@ -1428,6 +1482,7 @@ class KnxGuiApp:
         self._project_plugin.render_overlays()
         self._render_progress_modal()
         self._render_import_password_modal()
+        self._render_network_consent_modal()
         self._render_url_prompt_modal()
         self._render_myknx_sign_modal()
         self._render_about_modal()
@@ -1625,6 +1680,11 @@ class KnxGuiApp:
         if self._export_success_msg is not None:
             self._toasts.append((self._export_success_msg, "success", now + 10.0))
             self._export_success_msg = None
+        if self._mirror_notice is not None:
+            self._toasts.append(
+                (S.MIRROR_NOTICE.format(home=self._mirror_notice), "success", now + 10.0)
+            )
+            self._mirror_notice = None
         for rec in self._log_service.get_records():
             if rec.timestamp <= self._toast_seen_ts:
                 continue
@@ -1882,8 +1942,14 @@ class KnxGuiApp:
                 imgui.separator()
                 imgui.text_disabled(S.WELCOME_RECENT)
                 for path in recent:
-                    if imgui.selectable(Path(path).name, False)[0]:
+                    # Append the full path as a hidden id part: two recents can share a filename
+                    # (e.g. the same project on a share and locally), and a bare label would give
+                    # them the same imgui ID ("conflicting ID" warning). Show the full path on hover
+                    # so identically-named entries are distinguishable.
+                    if imgui.selectable(f"{Path(path).name}##{path}", False)[0]:
                         self._do_open_project(path)
+                    if imgui.is_item_hovered():
+                        imgui.set_tooltip(path)
             imgui.spacing()
             if imgui.button(S.WELCOME_CLOSE, imgui.ImVec2(-1, 0)):
                 still_open = False
@@ -2101,6 +2167,10 @@ def _detect_locale() -> str:
 
 def main() -> None:
     import sys
+
+    # Before anything can reach the network: the packaged app's OpenSSL points at a trust store
+    # that only exists on the build machine, so fall back to the bundled certifi (see certs.py).
+    ensure_ca_bundle()
 
     if "--profile" in sys.argv:
         import cProfile
