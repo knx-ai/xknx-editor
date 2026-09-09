@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from editor_gui.plugins.project.plugin import ProjectPlugin
 from editor_gui.plugins.project.ui.tools import (
     apply_name_swap,
-    labels_csv,
     match_by_number,
     shifted_ia,
     topology_findings,
@@ -35,13 +34,6 @@ def test_shifted_ia():
     assert shifted_ia("a.b.c", 1) is None
     assert shifted_ia("16.1.5", 1) is None  # area out of range
     assert shifted_ia("1.16.5", 1) is None  # line out of range
-
-
-def test_labels_csv_header_and_escaping():
-    out = labels_csv([["1.1.1", "Name, with comma", "ORD", "MAN", ""]])
-    lines = out.splitlines()
-    assert lines[0] == "Individual Address,Name,Order Number,Manufacturer,Description"
-    assert lines[1] == '1.1.1,"Name, with comma",ORD,MAN,'
 
 
 def test_topology_findings():

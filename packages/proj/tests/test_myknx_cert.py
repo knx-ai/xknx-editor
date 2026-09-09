@@ -1,7 +1,6 @@
 """Error surfacing for the MyKnx certificate flow.
 
-The workset flow fails with HTTP 422 when the picked license is not a cloud-enabled ETS product.
-That must raise a typed :class:`MyKnxError` carrying the raw server ``detail`` (for logs) and a
+The workset flow fails with HTTP 422 when the picked license is not cloud-enabled. That must raise a typed :class:`MyKnxError` carrying the raw server ``detail`` (for logs) and a
 concise, actionable ``user_message`` (for the UI), not an opaque ``bytes`` repr.
 """
 
@@ -116,12 +115,20 @@ def test_login_does_not_log_the_password(
 
 
 def test_certificate_name_is_the_certificate_filename() -> None:
-    """ETS sends `{pid}.certificate` as projectName; the server echoes it into the CERT header."""
+    """projectName is `{pid}.certificate`; the server echoes it into the CERT header."""
     assert myknx_cert.certificate_name("P-0532") == "P-0532.certificate"
 
 
-def testnormalize_certificate_produces_ets_crlf_form() -> None:
-    """The API returns LF text; genuine ETS archives store CRLF with exactly one trailing CRLF."""
+def test_project_hash_is_the_folder_signature_verbatim() -> None:
+    """projectHash is the base64 folder signature sent unchanged (server hashes it), not sha256."""
+    sig = "I0PYKDTsrx1/P+3BbLnQScy5DmGulsdXzB23mVKjYcdq"
+    assert myknx_cert.project_hash(sig.encode("utf-8")) == sig
+    # a UTF-8 BOM (as written into the .signature file) is stripped.
+    assert myknx_cert.project_hash(b"\xef\xbb\xbf" + sig.encode("utf-8")) == sig
+
+
+def test_normalize_certificate_produces_crlf_form() -> None:
+    """The API returns LF text; archives store CRLF with exactly one trailing CRLF."""
     out = myknx_cert.normalize_certificate(
         'CERT KNX:"P-1.certificate"\n\tID="CloudLicense"\n\tSIGN=AB\n'
     )
@@ -130,7 +137,7 @@ def testnormalize_certificate_produces_ets_crlf_form() -> None:
     assert myknx_cert.normalize_certificate(out.decode("utf-8")) == out
 
 
-def testnormalize_certificate_collapses_trailing_blank_lines() -> None:
+def test_normalize_certificate_collapses_trailing_blank_lines() -> None:
     assert myknx_cert.normalize_certificate("CERT\n\n\n") == b"CERT\r\n"
 
 
@@ -138,7 +145,7 @@ def test_certificate_response_bare_json_string_is_unescaped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The endpoint returns a bare JSON *string*; returning it verbatim wrote the escaping into
-    {pid}.certificate (file starting with a quote, literal \\n), which ETS rejects."""
+    {pid}.certificate (file starting with a quote, literal \\n), which is rejected."""
     body = (
         b'"CERT KNX:\\"P-9.certificate\\"\\n\\tID=\\"CloudLicense\\"\\n\\tSIGN=FF\\n"'
     )

@@ -7,24 +7,25 @@ Four tabs, each a thin wrapper over existing project services:
 - **Shift Addresses**: shift the device octet of many individual addresses by an offset (to open
   gaps or renumber). Group-address shifting is intentionally out of scope (no re-address event
   exists that would preserve links).
-- **Labels**: export device individual address + metadata to a CSV for on-site labelling.
+- **Labels**: pick fields and export the devices as CSV, printable Avery label sheets, or a
+  full-page legend (HTML). Rendering lives in :mod:`label_render` (pure, unit-tested).
 - **Topology Check**: read-only scan for missing / duplicate / malformed individual addresses.
 
-The pure helpers (:func:`apply_name_swap`, :func:`shifted_ia`, :func:`labels_csv`,
-:func:`topology_findings`) hold all the logic and are unit-tested without imgui.
+The pure helpers (:func:`apply_name_swap`, :func:`shifted_ia`, :func:`topology_findings`) hold all
+the logic and are unit-tested without imgui.
 """
 
 from __future__ import annotations
 
-import csv
-import io
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from imgui_bundle import imgui
 from imgui_bundle import portable_file_dialogs as pfd
 
+from editor_gui.os_open import open_path
 from editor_gui.plugins.project.strings import S
+from editor_gui.plugins.project.ui import label_render
 from editor_gui.plugins.project.ui._filter import filter_box
 
 if TYPE_CHECKING:
@@ -33,14 +34,8 @@ if TYPE_CHECKING:
 
 LinkResult = tuple[int, list[str]]  # (changed count, error messages)
 
-# CSV columns for the Labels export.
-_LABEL_HEADER = [
-    "Individual Address",
-    "Name",
-    "Order Number",
-    "Manufacturer",
-    "Description",
-]
+# Labels output modes (index into the radio group).
+_MODE_CSV, _MODE_SHEET, _MODE_LEGEND = 0, 1, 2
 
 _ERR_COLOR = imgui.ImVec4(0.90, 0.45, 0.45, 1.0)
 _WARN_COLOR = imgui.ImVec4(0.90, 0.75, 0.35, 1.0)
@@ -120,15 +115,6 @@ def _co_label(co: ComObject) -> str:
     return label
 
 
-def labels_csv(rows: list[list[str]]) -> str:
-    """Render label rows (each already ``[ia, name, order, manufacturer, description]``) as CSV."""
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(_LABEL_HEADER)
-    writer.writerows(rows)
-    return buf.getvalue()
-
-
 def topology_findings(
     devices: list[tuple[int, str, str]],
 ) -> list[tuple[int, str, str]]:
@@ -166,6 +152,8 @@ class ToolsPanel:
         on_shift_addresses: Callable[[list[int], int], LinkResult],
         on_navigate: Callable[[int], None],
         on_replace_device: Callable[[int, int], LinkResult],
+        get_space_path: Callable[[int], str],
+        get_device_gas: Callable[[Device], list[str]],
     ) -> None:
         self._get_devices = get_devices
         self._get_device_info = get_device_info
@@ -174,6 +162,8 @@ class ToolsPanel:
         self._on_shift_addresses = on_shift_addresses
         self._on_navigate = on_navigate
         self._on_replace_device = on_replace_device
+        self._get_space_path = get_space_path
+        self._get_device_gas = get_device_gas
 
         # Replace Device state (selection by node id, with per-list filters).
         self._repl_target_node: int | None = None
@@ -192,9 +182,16 @@ class ToolsPanel:
         self._device_filter = ""
         # Cache of immutable device metadata (product/order/manufacturer) for the list rows.
         self._info_cache: dict[int, DeviceInfo | None] = {}
-        # Labels export dialog handle + pending content.
+        # Labels: field selection + output mode + export dialog handle/content.
+        self._label_fields: set[str] = set(label_render.DEFAULT_FIELDS)
+        self._label_mode = _MODE_CSV
+        self._label_use_custom = False
+        self._label_grid = label_render.CustomGrid()
         self._label_dialog: pfd.save_file | None = None
-        self._label_csv = ""
+        self._label_content = ""  # pending file body (CSV or HTML)
+        self._label_open_after = (
+            False  # open the file in the browser after saving (HTML)
+        )
         # Last result line (shown under the active tab).
         self._status = ""
 
@@ -451,10 +448,11 @@ class ToolsPanel:
     def _render_labels_tab(self) -> None:
         devices = self._get_devices()
         _desc(S.TOOLS_LABELS_DESC)
+        # Devices to include.
         imgui.separator_text(S.TOOLS_TAB_LABELS)
         shown = self._filtered(devices, "labels")
         self._device_toolbar(devices, shown)
-        if imgui.begin_child("##label_list", imgui.ImVec2(0.0, 260.0), True):
+        if imgui.begin_child("##label_list", imgui.ImVec2(0.0, 200.0), True):
             for d in shown:
                 selected = d.node_id in self._selected_nodes
                 changed, new_sel = imgui.checkbox(f"##lb{d.node_id}", selected)
@@ -462,30 +460,132 @@ class ToolsPanel:
                     self._toggle(d.node_id, new_sel)
                 self._device_row_label(d)
         imgui.end_child()
+        self._render_field_picker()
+        self._render_output_controls()
         chosen = self._selected_devices(devices)
-        imgui.begin_disabled(not chosen or self._label_dialog is not None)
-        if imgui.button(S.TOOLS_LABELS_EXPORT, imgui.ImVec2(-1, 0)):
-            self._label_csv = labels_csv(self._label_rows(chosen))
-            self._label_dialog = pfd.save_file(
-                S.TOOLS_LABELS_EXPORT, "labels.csv", ["CSV", "*.csv"]
-            )
+        can_export = bool(chosen) and bool(self._label_fields)
+        if not self._label_fields:
+            imgui.text_colored(_WARN_COLOR, S.TOOLS_LABELS_NO_FIELDS)
+        imgui.begin_disabled(not can_export or self._label_dialog is not None)
+        button = (
+            S.TOOLS_LABELS_EXPORT
+            if self._label_mode == _MODE_CSV
+            else S.TOOLS_LABELS_EXPORT_HTML
+        )
+        if imgui.button(button, imgui.ImVec2(-1, 0)):
+            self._start_label_export(chosen)
         imgui.end_disabled()
         self._render_status()
 
-    def _label_rows(self, devices: list[Device]) -> list[list[str]]:
-        rows: list[list[str]] = []
-        for d in devices:
-            info = self._get_device_info(d.node_id)
-            rows.append(
-                [
-                    d.individual_address,
-                    d.name,
-                    info.order_number if info else "",
-                    info.manufacturer_name if info else "",
-                    info.description if info else "",
-                ]
+    def _render_field_picker(self) -> None:
+        """Checkboxes for the label fields, in canonical order, wrapped across the width."""
+        imgui.separator_text(S.TOOLS_LABELS_FIELDS_TITLE)
+        labels = S.TOOLS_LABEL_FIELDS
+        avail = imgui.get_content_region_avail().x
+        used = 0.0
+        for fid in label_render.FIELD_IDS:
+            selected = fid in self._label_fields
+            changed, now = imgui.checkbox(
+                f"{labels.get(fid, fid)}##fld_{fid}", selected
             )
-        return rows
+            if changed:
+                if now:
+                    self._label_fields.add(fid)
+                else:
+                    self._label_fields.discard(fid)
+            used += imgui.get_item_rect_size().x + 16.0
+            if used < avail - 120.0:
+                imgui.same_line()
+            else:
+                used = 0.0
+
+    def _render_output_controls(self) -> None:
+        imgui.separator_text(S.TOOLS_LABELS_OUTPUT)
+        for mode, label in (
+            (_MODE_CSV, S.TOOLS_LABELS_MODE_CSV),
+            (_MODE_SHEET, S.TOOLS_LABELS_MODE_SHEET),
+            (_MODE_LEGEND, S.TOOLS_LABELS_MODE_LEGEND),
+        ):
+            if imgui.radio_button(label, self._label_mode == mode):
+                self._label_mode = mode
+            imgui.same_line()
+        imgui.new_line()
+        if self._label_mode == _MODE_SHEET:
+            self._render_sheet_controls()
+
+    def _render_sheet_controls(self) -> None:
+        _, self._label_use_custom = imgui.checkbox(
+            S.TOOLS_LABELS_SHEET_CUSTOM, self._label_use_custom
+        )
+        if not self._label_use_custom:
+            imgui.same_line()
+            imgui.text_disabled(f"({label_render.SHEET_L7651.name})")
+            return
+        g = self._label_grid
+        imgui.set_next_item_width(120.0)
+        _, g.cols = imgui.input_int(S.TOOLS_LABELS_GRID_COLS, g.cols)
+        imgui.set_next_item_width(120.0)
+        _, g.rows = imgui.input_int(S.TOOLS_LABELS_GRID_ROWS, g.rows)
+        _, wh = imgui.input_float2(
+            S.TOOLS_LABELS_GRID_LABEL_MM, (g.label_w_mm, g.label_h_mm)
+        )
+        g.label_w_mm, g.label_h_mm = wh
+        _, tl = imgui.input_float2(
+            S.TOOLS_LABELS_GRID_MARGIN_MM, (g.margin_top_mm, g.margin_left_mm)
+        )
+        g.margin_top_mm, g.margin_left_mm = tl
+        _, xy = imgui.input_float2(S.TOOLS_LABELS_GRID_GAP_MM, (g.gap_x_mm, g.gap_y_mm))
+        g.gap_x_mm, g.gap_y_mm = xy
+
+    def _start_label_export(self, devices: list[Device]) -> None:
+        """Build the file body for the chosen mode and open a save dialog."""
+        fields = label_render.order_fields(self._label_fields)
+        records = [self._label_record(d) for d in devices]
+        header, rows = label_render.build_table(records, fields, S.TOOLS_LABEL_FIELDS)
+        if self._label_mode == _MODE_CSV:
+            self._label_content = label_render.labels_csv(header, rows)
+            self._label_open_after = False
+            self._label_dialog = pfd.save_file(
+                S.TOOLS_LABELS_EXPORT, "labels.csv", ["CSV", "*.csv"]
+            )
+            return
+        if self._label_mode == _MODE_SHEET:
+            sheet = (
+                self._label_grid.to_sheet()
+                if self._label_use_custom
+                else label_render.SHEET_L7651
+            )
+            self._label_content = label_render.render_labels_html(rows, sheet)
+        else:
+            self._label_content = label_render.render_legend_html(header, rows)
+        self._label_open_after = True
+        self._label_dialog = pfd.save_file(
+            S.TOOLS_LABELS_EXPORT_HTML, "labels.html", ["HTML", "*.html"]
+        )
+
+    def _label_record(self, device: Device) -> dict[str, str]:
+        """Resolve one device into a field-id -> string map for the selected label fields."""
+        info = self._get_device_info(device.node_id)
+        rec: dict[str, str] = {
+            "ia": device.individual_address,
+            "name": device.name,
+            "application": device.app.name,
+        }
+        if info is not None:
+            rec.update(
+                description=info.description,
+                order=info.order_number,
+                manufacturer=info.manufacturer_name,
+                product=info.product_name,
+                hardware=info.hardware_name,
+                serial=info.serial_number,
+            )
+        # Lazily resolve the two expensive fields only when the user selected them.
+        if "location" in self._label_fields:
+            rec["location"] = self._get_space_path(device.node_id)
+        if "gas" in self._label_fields:
+            rec["gas"] = "; ".join(self._get_device_gas(device))
+        return rec
 
     def _poll_label_dialog(self) -> None:
         if self._label_dialog is None or not self._label_dialog.ready():
@@ -494,13 +594,21 @@ class ToolsPanel:
         self._label_dialog = None
         if not path:
             return
-        if not path.lower().endswith(".csv"):
-            path += ".csv"
+        is_html = self._label_open_after
+        ext = ".html" if is_html else ".csv"
+        if not path.lower().endswith(ext):
+            path += ext
         try:
-            # utf-8-sig: the BOM makes Excel open the CSV with correct umlauts by default.
-            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
-                fh.write(self._label_csv)
+            if is_html:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(self._label_content)
+            else:
+                # utf-8-sig: the BOM makes Excel open the CSV with correct umlauts by default.
+                with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                    fh.write(self._label_content)
             self._status = S.TOOLS_LABELS_DONE.format(path=path)
+            if is_html:
+                open_path(path)
         except OSError as exc:
             self._status = f"{exc}"
 

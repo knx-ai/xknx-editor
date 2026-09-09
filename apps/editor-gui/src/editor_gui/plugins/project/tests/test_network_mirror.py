@@ -20,7 +20,9 @@ from editor_gui.plugins.project import service as service_mod
 from editor_gui.plugins.project.service import ProjectService
 
 
-def _setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[ProjectService, Path]:
+def _setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[ProjectService, Path]:
     """A ProjectService whose mirror store is under tmp_path, plus a ``net`` dir that is treated as
     a network location (everything under it is mirrored)."""
     cfg = tmp_path / "cfg"
@@ -45,7 +47,9 @@ def _ga_count(xknx: Path) -> int:
         con.close()
 
 
-def test_new_mirrored_uses_local_working(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_new_mirrored_uses_local_working(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     proj, net = _setup(tmp_path, monkeypatch)
     home = net / "p.xknx"
     proj.new(home)
@@ -56,7 +60,9 @@ def test_new_mirrored_uses_local_working(tmp_path: Path, monkeypatch: pytest.Mon
     assert not home.exists()  # nothing written to the "share" until close
 
 
-def test_close_writes_back_to_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_close_writes_back_to_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     proj, net = _setup(tmp_path, monkeypatch)
     home = net / "p.xknx"
     proj.new(home)
@@ -68,7 +74,9 @@ def test_close_writes_back_to_home(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert _ga_count(home) == 1  # the edit made it to the share copy
 
 
-def test_crash_recovery_reuses_unsynced_mirror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_crash_recovery_reuses_unsynced_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     proj, net = _setup(tmp_path, monkeypatch)
     home = net / "p.xknx"
     proj.new(home)
@@ -83,7 +91,9 @@ def test_crash_recovery_reuses_unsynced_mirror(tmp_path: Path, monkeypatch: pyte
     assert [g.address for g in proj2.group_addresses] == ["4/5/6"]
 
 
-def test_writeback_failure_keeps_mirror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_writeback_failure_keeps_mirror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     proj, net = _setup(tmp_path, monkeypatch)
     log = LogService()
     proj.set_logger(Logger(log, "project"))
@@ -103,7 +113,9 @@ def test_writeback_failure_keeps_mirror(tmp_path: Path, monkeypatch: pytest.Monk
     assert _ga_count(working) == 1  # local copy still holds the data
 
 
-def test_local_project_not_mirrored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_local_project_not_mirrored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     proj, _net = _setup(tmp_path, monkeypatch)
     home = tmp_path / "local.xknx"  # NOT under net -> not mirrored
     proj.new(home)
@@ -123,7 +135,9 @@ def test_distinct_shares_same_filename_distinct_mirrors(
     assert working_a is not None and working_b is not None and working_a != working_b
 
 
-def test_save_as_to_network_writes_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_as_to_network_writes_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     proj, net = _setup(tmp_path, monkeypatch)
     proj.new(tmp_path / "local.xknx")  # local, not mirrored
     proj.create_group_address(address="1/1/1", name="x")
@@ -137,7 +151,10 @@ def test_save_as_to_network_writes_back(tmp_path: Path, monkeypatch: pytest.Monk
 
 def _knxproj_fixture() -> Path | None:
     for parent in Path(__file__).resolve().parents:
-        fx = parent / "packages/proj/tests/fixtures/xknx_test_project_no_password.knxproj"
+        fx = (
+            parent
+            / "packages/proj/tests/fixtures/xknx_test_project_no_password.knxproj"
+        )
         if fx.is_file():
             return fx
     return None

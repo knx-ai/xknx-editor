@@ -213,6 +213,8 @@ class ProjectPlugin:
             on_shift_addresses=self._tools_shift_addresses,
             on_navigate=self._select_device_by_id,
             on_replace_device=self._tools_replace_device,
+            get_space_path=self._device_space_path,
+            get_device_gas=self._device_gas,
         )
 
         self._panels = [
@@ -366,6 +368,38 @@ class ProjectPlugin:
             return None
 
         return walk(self._api.project.get_space_tree()) or ""
+
+    def _device_space_path(self, node_id: int) -> str:
+        """Full 'Building / Floor / Room' path of the space containing ``node_id``, or "" if none."""
+
+        def walk(spaces: list[Any], trail: list[str]) -> str | None:
+            for space in spaces:
+                here = [*trail, space.name]
+                if any(d.id == node_id for d in space.devices):
+                    return " / ".join(here)
+                hit = walk(space.children, here)
+                if hit:
+                    return hit
+            return None
+
+        return walk(self._api.project.get_space_tree(), []) or ""
+
+    def _device_gas(self, device: "Device") -> list[str]:
+        """Every group address a device links, as 'address name' strings (deduplicated, in order)."""
+        seen: set[str] = set()
+        result: list[str] = []
+        for co in device.com_objects:
+            if co.db_id is None:
+                continue
+            for assignment in self._api.project.get_links_for_com_object(co.db_id):
+                ga = self._api.project.get_group_address(assignment.group_address_id)
+                if ga is None:
+                    continue
+                text = f"{ga.address} {ga.name}".strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    result.append(text)
+        return result
 
     def _suggest_ga_for_object(
         self, device: "Device", com_object: Any

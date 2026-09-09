@@ -352,8 +352,8 @@ class ProjectStrings:
     @property
     def TOOLS_LABELS_DESC(self) -> str:
         return _(
-            "Export the device list (address, name, order number, manufacturer, "
-            "description) to a CSV you can print as on-site labels."
+            "Pick the fields and an output: a CSV, printable label sheets (Avery), or a "
+            "full-page legend. HTML output opens in your browser to print or save as PDF."
         )
 
     @property
@@ -445,6 +445,79 @@ class ProjectStrings:
     @property
     def TOOLS_LABELS_DONE(self) -> str:
         return _("Exported to {path}")
+
+    # Labels: field selection (keys match label_render.FIELD_IDS).
+    @property
+    def TOOLS_LABEL_FIELDS(self) -> dict[str, str]:
+        return {
+            "ia": _("Address"),
+            "name": _("Name"),
+            "location": _("Location"),
+            "description": _("Description"),
+            "order": _("Order number"),
+            "manufacturer": _("Manufacturer"),
+            "product": _("Product"),
+            "hardware": _("Hardware"),
+            "serial": _("Serial number"),
+            "application": _("Application"),
+            "gas": _("Group addresses"),
+        }
+
+    @property
+    def TOOLS_LABELS_FIELDS_TITLE(self) -> str:
+        return _("Fields")
+
+    @property
+    def TOOLS_LABELS_OUTPUT(self) -> str:
+        return _("Output")
+
+    @property
+    def TOOLS_LABELS_MODE_CSV(self) -> str:
+        return _("CSV")
+
+    @property
+    def TOOLS_LABELS_MODE_SHEET(self) -> str:
+        return _("Label sheet")
+
+    @property
+    def TOOLS_LABELS_MODE_LEGEND(self) -> str:
+        return _("Legend (full page)")
+
+    @property
+    def TOOLS_LABELS_SHEET(self) -> str:
+        return _("Sheet")
+
+    @property
+    def TOOLS_LABELS_SHEET_CUSTOM(self) -> str:
+        return _("Custom grid")
+
+    @property
+    def TOOLS_LABELS_GRID_COLS(self) -> str:
+        return _("Columns")
+
+    @property
+    def TOOLS_LABELS_GRID_ROWS(self) -> str:
+        return _("Rows")
+
+    @property
+    def TOOLS_LABELS_GRID_LABEL_MM(self) -> str:
+        return _("Label w x h (mm)")
+
+    @property
+    def TOOLS_LABELS_GRID_MARGIN_MM(self) -> str:
+        return _("Margin top / left (mm)")
+
+    @property
+    def TOOLS_LABELS_GRID_GAP_MM(self) -> str:
+        return _("Gap x / y (mm)")
+
+    @property
+    def TOOLS_LABELS_EXPORT_HTML(self) -> str:
+        return _("Export HTML...")
+
+    @property
+    def TOOLS_LABELS_NO_FIELDS(self) -> str:
+        return _("Select at least one field.")
 
     @property
     def TOOLS_TOPOLOGY_OK(self) -> str:

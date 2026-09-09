@@ -433,7 +433,9 @@ class ProjectService:
                 continue
             mp = line.split(" on ", 1)[1].rsplit(" (", 1)[0]
             fstype = line.rsplit("(", 1)[1].split(",", 1)[0].strip()
-            if (s == mp or s.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(best_mp):
+            if (s == mp or s.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(
+                best_mp
+            ):
                 best_mp, best_type = mp, fstype
         return best_type in cls._NETWORK_FS
 
@@ -451,7 +453,9 @@ class ProjectService:
                     continue
                 mp = fields[4]
                 fstype = right.split(maxsplit=1)[0]
-                if (s == mp or s.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(best_mp):
+                if (s == mp or s.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(
+                    best_mp
+                ):
                     best_mp, best_type = mp, fstype
         return best_type in cls._NETWORK_FS
 
