@@ -18,6 +18,7 @@ from xknxeditor.proj.core.myknx_cert import (
     MyKnxSession,
     _redact_url,
     _server_detail,
+    _type_is_cloud_capable,
 )
 
 _CLOUD_422 = (
@@ -30,6 +31,20 @@ def test_server_detail_unwraps_json_string() -> None:
     assert _server_detail(b'"boom"') == "boom"
     assert _server_detail(b'{"message": "nope"}') == "nope"
     assert _server_detail(b"not json") == "not json"
+
+
+def test_type_is_cloud_capable_keys_on_the_encryptions_list() -> None:
+    """Only product types whose ``encryptions`` contains ``"cloud"`` can sign online (ETS6 and
+    cloud-enabled apps); ETS5/older or dongle-only types cannot -- this is the discriminator the
+    certificate endpoint enforces (others fail add-product with HTTP 422)."""
+    assert (
+        _type_is_cloud_capable({"encryptions": ["ets_dongle", "cloud"]}) is True
+    )  # ETS6
+    assert _type_is_cloud_capable({"encryptions": ["cloud"]}) is True  # ETS app
+    assert _type_is_cloud_capable({"encryptions": ["ets_dongle"]}) is False  # ETS5
+    assert _type_is_cloud_capable({"encryptions": []}) is False  # account's licenses
+    assert _type_is_cloud_capable({}) is False  # missing field
+    assert _type_is_cloud_capable(None) is False  # unknown product type
 
 
 def _fake_post(url: str, body: bytes, headers: dict[str, str], timeout: float):

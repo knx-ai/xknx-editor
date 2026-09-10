@@ -14,6 +14,7 @@ Protocol:
 
 from __future__ import annotations
 
+import email.message
 import io
 import json
 import logging
@@ -128,6 +129,21 @@ def _body_preview(body: bytes, limit: int = 2000) -> str:
     )
 
 
+def _headers_with_reason(
+    raw: email.message.Message | None, reason: str | None
+) -> dict[str, str]:
+    """Lowercase the response headers and add the HTTP status reason phrase.
+
+    The reason phrase (e.g. "Unauthorized") and headers like ``WWW-Authenticate`` are the only
+    error information a response carries when the body is empty, so surface them under the synthetic
+    ``x-http-reason`` key (no server sends that header) for :func:`_server_detail` fallbacks.
+    """
+    headers = {k.lower(): v for k, v in (raw.items() if raw is not None else [])}
+    if reason:
+        headers["x-http-reason"] = reason
+    return headers
+
+
 def _post(
     url: str, body: bytes, headers: dict[str, str], timeout: float
 ) -> tuple[int, dict[str, str], bytes]:
@@ -140,7 +156,11 @@ def _post(
             logger.debug(
                 "myknx POST %s -> %d body=%s", safe_url, r.status, _body_preview(resp)
             )
-            return r.status, {k.lower(): v for k, v in r.headers.items()}, resp
+            return (
+                r.status,
+                _headers_with_reason(r.headers, getattr(r, "reason", None)),
+                resp,
+            )
     except urllib.error.HTTPError as e:
         resp = e.read()
         logger.debug(
@@ -149,7 +169,7 @@ def _post(
             e.code,
             _body_preview(resp),
         )
-        return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, resp
+        return e.code, _headers_with_reason(e.headers, getattr(e, "reason", None)), resp
 
 
 def _get(
@@ -164,7 +184,11 @@ def _get(
             logger.debug(
                 "myknx GET %s -> %d body=%s", safe_url, r.status, _body_preview(resp)
             )
-            return r.status, {k.lower(): v for k, v in r.headers.items()}, resp
+            return (
+                r.status,
+                _headers_with_reason(r.headers, getattr(r, "reason", None)),
+                resp,
+            )
     except urllib.error.HTTPError as e:
         resp = e.read()
         logger.debug(
@@ -173,7 +197,7 @@ def _get(
             e.code,
             _body_preview(resp),
         )
-        return e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, resp
+        return e.code, _headers_with_reason(e.headers, getattr(e, "reason", None)), resp
 
 
 def _empty_headers() -> dict[str, str]:
@@ -229,10 +253,14 @@ class MyKnxSession:
             self.timeout,
         )
         if status // 100 != 2:
-            detail = _server_detail(body)
+            detail = (
+                _server_detail(body)
+                or headers.get("www-authenticate", "")
+                or headers.get("x-http-reason", "")
+            )
             logger.error("MyKnx login failed: HTTP %s: %s", status, detail)
             raise MyKnxError(
-                f"login failed: HTTP {status}: {detail}",
+                f"HTTP {status}: {detail}" if detail else f"HTTP {status}",
                 status=status,
                 detail=detail,
                 user_message="MyKnx login failed - check your username and password.",
@@ -267,6 +295,22 @@ class MyKnxSession:
         if status // 100 != 2:
             raise RuntimeError(f"product/getAll failed: HTTP {status}: {resp[:200]!r}")
         return json.loads(resp or b"[]")
+
+    def product_types(self) -> dict[str, dict[str, object]]:
+        """Map each product-type id to its type object (``GET /productType/getAll``).
+
+        A product from :meth:`products` carries only ids and a ``licenseNumber`` -- no display
+        name and no capability flags; both live on its product type. The type's ``encryptions``
+        list tells whether an online certificate is possible (it contains ``"cloud"`` for
+        cloud-enabled types, e.g. ETS6; ETS5/older or add-on-only types do not), so callers resolve
+        both the name and cloud-capability via this map."""
+        status, resp = self._req("GET", "/productType/getAll")
+        if status // 100 != 2:
+            raise RuntimeError(
+                f"productType/getAll failed: HTTP {status}: {resp[:200]!r}"
+            )
+        types: list[dict[str, object]] = json.loads(resp or b"[]")
+        return {str(t.get("id") or ""): t for t in types}
 
     def project_certificate(
         self, product_id: str, project_hash_hex: str, project_name: str
@@ -393,16 +437,40 @@ def obtain_certificate(
     )
 
 
+def _type_is_cloud_capable(product_type: dict[str, object] | None) -> bool:
+    """Return whether a product type can sign projects online.
+
+    A type carries an ``encryptions`` list; it contains ``"cloud"`` exactly for the types the
+    certificate endpoint accepts (ETS6 licenses and cloud-enabled add-ons). ETS5/older Professional
+    or dongle-only types have no ``"cloud"`` entry and always fail add-product with HTTP 422. This
+    mirrors ETS's own CloudKit license filter (IsExpired + HasFeature)."""
+    if product_type is None:
+        return False
+    encryptions = product_type.get("encryptions")
+    if not isinstance(encryptions, list):
+        return False
+    return "cloud" in encryptions
+
+
 def fetch_myknx_products(
     username: str, password: str, *, timeout: float = 30.0
 ) -> list[dict[str, object]]:
     """Log in and return the account's products/licenses (``GET /product/getAll``).
 
-    Used by the GUI so the user can pick a license instead of typing an opaque product id.
-    Blocking (network I/O); call from a worker thread."""
+    Each product is enriched with a ``name`` (its product-type name) and a ``cloud_capable`` flag
+    (whether its product type can sign projects online, see :func:`_type_is_cloud_capable`),
+    resolved via :meth:`MyKnxSession.product_types` because the product itself carries only ids and
+    a ``licenseNumber``. Used by the GUI so the user can pick a license by name and see which ones
+    can actually produce an online certificate. Blocking (network I/O); call from a worker thread."""
     session = MyKnxSession(access_token="", timeout=timeout)
     session.login(username, password)
-    return session.products()
+    products = session.products()
+    types = session.product_types()
+    for p in products:
+        product_type = types.get(str(p.get("productTypeId") or ""))
+        p["name"] = str(product_type.get("name") or "") if product_type else ""
+        p["cloud_capable"] = _type_is_cloud_capable(product_type)
+    return products
 
 
 def myknx_certificate_signer(

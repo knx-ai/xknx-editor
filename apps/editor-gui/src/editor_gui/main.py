@@ -140,6 +140,27 @@ def _download_bytes(
     return data
 
 
+def _myknx_product_name(product: dict[str, object], pid: str) -> str:
+    """Best-effort human-readable name for a MyKnx product/license, else the id.
+
+    The exact field name depends on the account's products, so try the known keys first and then
+    any string-valued field whose key looks like a name/description (case-insensitive) and differs
+    from the id. Returns ``pid`` when nothing usable is found (the caller renders the id alone)."""
+    for key in ("name", "productName", "productType", "product_type", "description"):
+        value = product.get(key)
+        if isinstance(value, str) and value.strip() and value != pid:
+            return value
+    for key, value in product.items():
+        if (
+            ("name" in key.lower() or "description" in key.lower())
+            and isinstance(value, str)
+            and value.strip()
+            and value != pid
+        ):
+            return value
+    return pid
+
+
 class KnxGuiApp:
     def __init__(self, catalog_path: Path) -> None:
         self._catalog_service_path = catalog_path
@@ -162,7 +183,7 @@ class KnxGuiApp:
         self._myknx_password = os.environ.get("MYKNX_PASSWORD", "")
         # After login we fetch the account's licenses so the user picks one instead of typing an
         # opaque product id. None = not logged in yet; [] = logged in but no licenses.
-        self._myknx_products: list[tuple[str, str]] | None = None
+        self._myknx_products: list[tuple[str, str, bool]] | None = None
         self._myknx_selected_pid = os.environ.get("MYKNX_PRODUCT_ID", "")
         self._myknx_login_thread: threading.Thread | None = None
         self._myknx_login_error = ""
@@ -568,22 +589,40 @@ class KnxGuiApp:
             self._myknx_login_error = str(e)
             self._myknx_products = []
             return
-        items: list[tuple[str, str]] = []
+        items: list[tuple[str, str, bool]] = []
+        if products:
+            # The label falls back to the raw id when no name field is recognized; log the actual
+            # keys once so an unrecognized schema can be mapped without a live capture.
+            self._log.info(
+                "myknx products", count=len(products), keys=sorted(products[0])
+            )
         for p in products:
             pid = str(p.get("id") or p.get("productId") or "")
             if not pid:
                 continue
-            name = str(
-                p.get("name")
-                or p.get("productName")
-                or p.get("productType")
-                or p.get("product_type")
-                or pid
+            name = _myknx_product_name(p, pid)
+            lic = str(p.get("licenseNumber") or "")
+            # A product has no unique name (several share a product-type name), so pair the name
+            # with the license number; fall back to the raw id when neither is available.
+            label = (
+                "  -  ".join(x for x in (name if name != pid else "", lic) if x) or pid
             )
-            items.append((pid, f"{name}  ({pid})"))
+            # Only cloud-capable, non-expired licenses can produce an online certificate (ETS's own
+            # filter). The others stay visible but disabled, with the reason appended to the label.
+            expired = bool(p.get("isExpired"))
+            cloud = bool(p.get("cloud_capable"))
+            enabled = cloud and not expired
+            if not enabled:
+                reason = S.MYKNX_SIGN_EXPIRED if expired else S.MYKNX_SIGN_NO_CLOUD
+                label = f"{label}  ({reason})"
+            items.append((pid, label, enabled))
         self._myknx_products = items
-        if items and self._myknx_selected_pid not in {pid for pid, _ in items}:
-            self._myknx_selected_pid = items[0][0]
+        enabled_pids = {pid for pid, _, enabled in items if enabled}
+        if self._myknx_selected_pid not in enabled_pids:
+            # Prefer the first signable license; leave empty (Sign disabled) when none qualifies.
+            self._myknx_selected_pid = (
+                next(iter(enabled_pids), "") if enabled_pids else ""
+            )
 
     def _render_myknx_sign_modal(self) -> None:
         """After the save dialog, ask whether to also sign the export with a MyKnx certificate.
@@ -716,17 +755,27 @@ class KnxGuiApp:
         current = next(
             (
                 lbl
-                for pid, lbl in self._myknx_products
+                for pid, lbl, _enabled in self._myknx_products
                 if pid == self._myknx_selected_pid
             ),
             self._myknx_products[0][1],
         )
         imgui.set_next_item_width(-1)
         if imgui.begin_combo("##myknx_license", current):
-            for pid, lbl in self._myknx_products:
-                if imgui.selectable(lbl, pid == self._myknx_selected_pid)[0]:
+            for pid, lbl, enabled in self._myknx_products:
+                # Non-cloud/expired licenses stay visible but greyed out and unselectable, so the
+                # user sees the whole account and why a license cannot sign online.
+                if not enabled:
+                    imgui.begin_disabled()
+                    imgui.selectable(lbl, False)
+                    imgui.end_disabled()
+                elif imgui.selectable(lbl, pid == self._myknx_selected_pid)[0]:
                     self._myknx_selected_pid = pid
             imgui.end_combo()
+        if not any(enabled for _pid, _lbl, enabled in self._myknx_products):
+            imgui.push_style_color(imgui.Col_.text, imgui.ImVec4(0.85, 0.7, 0.3, 1.0))
+            imgui.text_wrapped(S.MYKNX_SIGN_NO_CLOUD_HINT)
+            imgui.pop_style_color()
         return self._myknx_selected_pid
 
     def _do_import_knxproj(self, source: str, dest: str) -> None:
@@ -1075,7 +1124,9 @@ class KnxGuiApp:
 
         # Open on a worker thread behind the spinner: building a large project's device view is slow.
         # A network location asks for consent first (work on a local copy), then runs the worker.
-        self._maybe_consent_then(path, lambda: self._run_bg(S.PROGRESS_OPEN_PROJECT, worker))
+        self._maybe_consent_then(
+            path, lambda: self._run_bg(S.PROGRESS_OPEN_PROJECT, worker)
+        )
 
     def _prompt_import_dest(self, source: str) -> None:
         """Remember the .knxproj source and ask where to save the imported .xknx project."""
@@ -1682,7 +1733,11 @@ class KnxGuiApp:
             self._export_success_msg = None
         if self._mirror_notice is not None:
             self._toasts.append(
-                (S.MIRROR_NOTICE.format(home=self._mirror_notice), "success", now + 10.0)
+                (
+                    S.MIRROR_NOTICE.format(home=self._mirror_notice),
+                    "success",
+                    now + 10.0,
+                )
             )
             self._mirror_notice = None
         for rec in self._log_service.get_records():

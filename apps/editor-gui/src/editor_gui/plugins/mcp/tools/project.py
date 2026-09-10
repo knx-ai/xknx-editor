@@ -141,9 +141,7 @@ def _ui_node(node: Any) -> dict[str, Any]:
     if isinstance(node, (UiTab, UiParameterBlock)):
         heading = getattr(node, "text", None) or getattr(node, "name", None)
         children = [
-            d
-            for ch in node.children
-            if (d := _ui_node(ch)).get("kind") != "separator"
+            d for ch in node.children if (d := _ui_node(ch)).get("kind") != "separator"
         ]
         return {
             "kind": "tab" if isinstance(node, UiTab) else "block",
@@ -829,7 +827,10 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         """Link a device com-object to a group address. Identify the com-object by ``(node_id,
         com_object_ref_id)`` from project_list_com_objects (it must be ``linkable``).
 
-        ``is_sending`` marks the transmitting link. Returns the created assignment."""
+        ``is_sending`` marks the transmitting link and defaults to False. Set it True for a com-object
+        that must SEND its telegram on the bus (a push-button/sensor output, i.e. one whose Transmit
+        flag is set) — otherwise the object only receives and pressing/triggering it sends nothing.
+        Each object should have exactly one sending group address. Returns the created assignment."""
         require_project(ctx)
 
         def _link() -> dict[str, Any]:

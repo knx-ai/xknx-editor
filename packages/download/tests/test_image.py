@@ -40,6 +40,44 @@ def test_memory_segment_end() -> None:
     assert MemorySegment(address=0x100, data=bytes(4)).end == 0x104
 
 
+def test_masked_writes_within_segment() -> None:
+    image = DownloadImage(
+        segments=(MemorySegment(address=0x100, data=bytes(range(16))),),
+        properties=(),
+    )
+    assert image.masked_writes(0x104, 4) == [(0x104, bytes([4, 5, 6, 7]))]
+
+
+def test_masked_writes_missing_range_is_none() -> None:
+    image = DownloadImage(
+        segments=(MemorySegment(address=0x100, data=bytes(4)),),
+        properties=(),
+    )
+    # No segment overlaps 0x900: the programming data is missing (distinct from an
+    # empty list, which means covered-but-nothing-to-write). The write path turns
+    # this into an ImageError.
+    assert image.masked_writes(0x900, 4) is None
+
+
+def test_masked_writes_allocation_larger_than_segment_clips() -> None:
+    """An allocation larger than the image data that fills it writes only the data.
+
+    Regression: a memory-mapped group-address / association table ``LdCtrlAbsSegment``
+    declares the table's full capacity (here 513 octets) while the image segment holds
+    only the few used entries. ``masked_writes`` must still return the (clipped) image
+    run, not ``None`` - requiring full containment made it report the range as missing,
+    so the write path (``_abs_segment``'s ``if runs``) and the preflight silently skipped
+    the association table and the device kept its stale group-address links, so
+    re-linked com-objects sent nothing on the bus.
+    """
+    image = DownloadImage(
+        segments=(MemorySegment(address=0x4000, data=b"\x04\x11\x27\x11\x2a"),),
+        properties=(),
+    )
+    runs = image.masked_writes(0x4000, 513)
+    assert runs == [(0x4000, b"\x04\x11\x27\x11\x2a")]
+
+
 def test_build_image_from_project_device() -> None:
     from types import SimpleNamespace
     from typing import cast

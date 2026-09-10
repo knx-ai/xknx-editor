@@ -192,21 +192,36 @@ class DownloadImage:
     def masked_writes(self, address: int, size: int) -> list[tuple[int, bytes]] | None:
         """Return the ``(address, data)`` runs to write within ``[address, size)``.
 
-        Finds the single segment covering the range and returns its masked runs
-        clipped to the range (see :meth:`MemorySegment.masked_runs`). Returns
-        ``None`` when no segment covers the range (as :meth:`read_optional` does),
-        and an empty list when the segment covers it but writes nothing there.
+        Collects the masked runs of every segment that *overlaps* the range,
+        clipped to it (see :meth:`MemorySegment.masked_runs`), in ascending
+        address order. Returns ``None`` only when no segment overlaps the range at
+        all (as :meth:`read_optional` reports missing data), and an empty list when
+        overlapping segments write nothing within it.
+
+        Overlap - not full containment - is the right test because an allocation is
+        commonly larger than the data that fills it: the group-address and
+        association table ``LdCtrlAbsSegment`` controls declare the table's full
+        capacity (e.g. 513/511 octets) while the image segment holds only the used
+        entries (a handful of octets). Requiring the whole allocation to lie inside
+        one segment made ``masked_writes`` return ``None`` for those tables, so the
+        write path (:meth:`_abs_segment`'s ``if runs``) and the preflight silently
+        skipped them and the association table (the group-address links) was never
+        written. Clipping to the overlap writes exactly the octets the image
+        produced, exactly as a shorter WriteMem/AbsSegment should.
         """
-        for segment in self.segments:
-            if segment.address <= address and address + size <= segment.end:
-                out: list[tuple[int, bytes]] = []
-                for run_address, run_data in segment.masked_runs():
-                    lo = max(run_address, address)
-                    hi = min(run_address + len(run_data), address + size)
-                    if lo < hi:
-                        out.append((lo, run_data[lo - run_address : hi - run_address]))
-                return out
-        return None
+        end = address + size
+        out: list[tuple[int, bytes]] = []
+        covered = False
+        for segment in sorted(self.segments, key=lambda s: s.address):
+            if segment.address >= end or segment.end <= address:
+                continue  # no overlap with the requested range
+            covered = True
+            for run_address, run_data in segment.masked_runs():
+                lo = max(run_address, address)
+                hi = min(run_address + len(run_data), end)
+                if lo < hi:
+                    out.append((lo, run_data[lo - run_address : hi - run_address]))
+        return out if covered else None
 
 
 def build_image(

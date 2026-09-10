@@ -90,7 +90,9 @@ class BaseStrings:
 
     @property
     def MIRROR_NOTICE(self) -> str:
-        return _("Working on a local copy; written back to {home} when you close the project.")
+        return _(
+            "Working on a local copy; written back to {home} when you close the project."
+        )
 
     @property
     def BTN_ADD(self) -> str:
@@ -396,6 +398,22 @@ class MenuStrings:
     @property
     def MYKNX_SIGN_NO_LICENSES(self) -> str:
         return _("No licenses found on this account")
+
+    @property
+    def MYKNX_SIGN_NO_CLOUD(self) -> str:
+        return _("no online certificate")
+
+    @property
+    def MYKNX_SIGN_EXPIRED(self) -> str:
+        return _("expired")
+
+    @property
+    def MYKNX_SIGN_NO_CLOUD_HINT(self) -> str:
+        return _(
+            "None of these licenses can sign online. Only ETS6 (or a cloud-enabled ETS app) "
+            "licenses produce a certificate; ETS5/older licenses cannot. Use 'License with a "
+            "dongle' instead."
+        )
 
     @property
     def MYKNX_SIGN_LOGIN_FAILED(self) -> str:
