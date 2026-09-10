@@ -8,13 +8,13 @@ workflows which can auto download pdf manuals from the manufacturers.
 
 
 > [!WARNING]
-> **Experimental software. Not affiliated with the KNX Association.**
+> **Not affiliated with the KNX Association.**
 >
-> XKNX Editor comes with no  guarantees. It writes to real KNX hardware, and a download can leave a device unavailable until it
-> is reprogrammed. Do not use it on a production installation you cannot afford to take offline, and
+> XKNX Editor comes with no  guarantees. It is tested with real devices but still a download can leave a device unavailable until it
+> is reprogrammed. Do not use it on a professional installation you cannot access directly and
 > keep a ETS backup of any project before opening it here.
 >
-> Verified device coverage is not complete. Please report what works and what does not.
+> Verified device coverage for downloading is good but not complete. Please report what works and what does not.
 >
 > **"KNX" and "ETS" are trademarks of the KNX Association.** This is an independent project, not
 > affiliated with, endorsed by, or connected to the KNX Association or its ETS software — including
