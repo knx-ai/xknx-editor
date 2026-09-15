@@ -43,10 +43,9 @@ def generate_demo(output_path: Path, catalog_path: Path) -> None:
     svc = ProjectService()
     pid = svc.create(output_path, "P-DEMO")
 
-    area_id = svc.create_area(pid, _INSTALLATION, 1, "Building")
-    line_id = svc.create_line(pid, area_id, 1, "Floor 1")
-    segment_id = _segment_of_line(svc, pid, line_id)
-    print("Created: Area 1 (Building) / Line 1.1 (Floor 1)")
+    # The baseline already seeds the 1.1 TP line where end devices belong; reuse it.
+    segment_id = _tp_segment(svc, pid)
+    print("Using seeded Area 1 / Line 1.1 (TP) for demo devices")
 
     for demo in DEMO_DEVICES:
         product = products.get(demo.application_id)
@@ -72,12 +71,14 @@ def generate_demo(output_path: Path, catalog_path: Path) -> None:
     print(f"\nDemo project saved to: {output_path}")
 
 
-def _segment_of_line(svc: ProjectService, pid: str, line_id: int) -> int:
+def _tp_segment(svc: ProjectService, pid: str) -> int:
+    """The seeded 1.1 TP line's segment (where end devices belong)."""
     for area in svc.topology(pid, _INSTALLATION).areas:
         for line in area.lines:
-            if line.id == line_id:
-                return line.segments[0].id
-    raise RuntimeError(f"line {line_id} not found")
+            for segment in line.segments:
+                if segment.medium_type == "MT-0":
+                    return segment.id
+    raise RuntimeError("no TP line in seeded topology")
 
 
 def main() -> None:

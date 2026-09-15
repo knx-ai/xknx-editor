@@ -344,7 +344,9 @@ class TestReactivateRetainsImportedValue:
         block = ChooseWhenNode(_REF_ACT, {"1": [func_choose]}, default_nodes=None)
         return act_leaf, block
 
-    def _cycle(self, state: GlobalState, nodes: tuple[DynamicNode, DynamicNode]) -> None:
+    def _cycle(
+        self, state: GlobalState, nodes: tuple[DynamicNode, DynamicNode]
+    ) -> None:
         state.reset_active()
         ctx = EvalContext(state)
         for node in nodes:
@@ -364,7 +366,9 @@ class TestReactivateRetainsImportedValue:
         self._cycle(state, nodes)  # import: imported branch active
         assert _OBJ_IMPORTED in state.active_param_refs()
 
-        state.set(_REF_ACT, "0")  # deactivate -> block gone, func value trimmed from active map
+        state.set(
+            _REF_ACT, "0"
+        )  # deactivate -> block gone, func value trimmed from active map
         self._cycle(state, nodes)
         assert _REF_FUNC not in state.param_ref_id_to_value  # trimmed while inactive
 
@@ -429,7 +433,9 @@ class TestUnionSuppressionIsOrderIndependent:
         state.snapshot_discovered_active()
         member_a, member_b = self._members()
         ctx = EvalContext(state)
-        assert member_b.eval(ctx) == []  # suppressed by the discovery result, order-independent
+        assert (
+            member_b.eval(ctx) == []
+        )  # suppressed by the discovery result, order-independent
         assert _REF_UB not in state.active_param_refs()
         member_a.eval(ctx)
         assert _REF_UA in state.active_param_refs()

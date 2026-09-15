@@ -66,6 +66,7 @@ def _device_dict(device: Device) -> dict[str, Any]:
         "node_id": device.node_id,
         "name": device.name,
         "individual_address": device.individual_address or None,
+        "description": device.description,
     }
 
 
@@ -363,7 +364,6 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
                     "hardware_name": info.hardware_name,
                     "product_name": info.product_name,
                     "manufacturer_name": info.manufacturer_name,
-                    "description": info.description,
                 }
             return data
 

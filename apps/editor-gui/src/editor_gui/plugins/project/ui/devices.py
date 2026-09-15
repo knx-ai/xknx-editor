@@ -41,6 +41,7 @@ class DevicesPanel:
         get_selected_node_id: Callable[[], int | None] = lambda: None,
         on_select_devices: Callable[[Device, list[int]], None] | None = None,
         get_selected_node_ids: Callable[[], set[int]] = lambda: set(),
+        on_delete_device: Callable[[Device], None] = lambda _d: None,
     ) -> None:
         self._get_devices = get_devices
         self._get_areas = get_areas
@@ -53,6 +54,7 @@ class DevicesPanel:
         self._get_selected_node_ids = get_selected_node_ids
         self._last_selected: int | None = None
         self._on_clone_device = on_clone_device
+        self._on_delete_device = on_delete_device
         self._on_move_device = on_move_device
         self._on_create_area = on_create_area
         self._on_remove_area = on_remove_area
@@ -66,11 +68,14 @@ class DevicesPanel:
         self._popup_area_number: int = 0
         self._popup_line_number: int = 0
         self._popup_name: str = ""
+        self._popup_error: str = ""
         self._popup_target_area: Area | None = None
         self._popup_target_line: Line | None = None
         self._open_new_area_popup: bool = False
         self._open_new_line_popup: bool = False
         self._open_rename_popup: bool = False
+        self._delete_target_device: Device | None = None
+        self._open_delete_device_popup: bool = False
 
     def render(self) -> None:
         devices = self._get_devices()
@@ -93,18 +98,24 @@ class DevicesPanel:
             imgui.end_popup()
 
         if self._open_new_area_popup:
+            self._popup_error = ""
             imgui.open_popup(S.POPUP_NEW_AREA)
             self._open_new_area_popup = False
         if self._open_new_line_popup:
+            self._popup_error = ""
             imgui.open_popup(S.POPUP_NEW_LINE)
             self._open_new_line_popup = False
         if self._open_rename_popup:
             imgui.open_popup(S.POPUP_RENAME)
             self._open_rename_popup = False
+        if self._open_delete_device_popup:
+            imgui.open_popup(S.DEVICE_DELETE_TITLE)
+            self._open_delete_device_popup = False
 
         self._render_new_area_popup()
         self._render_new_line_popup()
         self._render_rename_popup()
+        self._render_delete_device_popup()
 
         leaf_flags = (
             imgui.TreeNodeFlags_.leaf
@@ -236,7 +247,37 @@ class DevicesPanel:
                 and imgui.menu_item(S.CONTEXT_COPY_ADDRESS, "", False)[0]
             ):
                 imgui.set_clipboard_text(device.individual_address)
+            imgui.separator()
+            if imgui.menu_item(S.CONTEXT_DELETE, "", False)[0]:
+                self._delete_target_device = device
+                self._open_delete_device_popup = True
             imgui.end_popup()
+
+    def _render_delete_device_popup(self) -> None:
+        if imgui.begin_popup_modal(
+            S.DEVICE_DELETE_TITLE, None, imgui.WindowFlags_.always_auto_resize
+        )[0]:
+            device = self._delete_target_device
+            name = self._device_display_name(device) if device else ""
+            imgui.text_wrapped(S.DEVICE_DELETE_CONFIRM.format(name=name))
+            imgui.separator()
+            if imgui.button(S.CONTEXT_DELETE, imgui.ImVec2(90, 0)):
+                if device is not None:
+                    self._on_delete_device(device)
+                self._delete_target_device = None
+                imgui.close_current_popup()
+            imgui.same_line()
+            if imgui.button(S.BTN_CANCEL, imgui.ImVec2(90, 0)):
+                self._delete_target_device = None
+                imgui.close_current_popup()
+            imgui.end_popup()
+
+    def _device_display_name(self, device: Device) -> str:
+        """Human label for dialogs: name, else product/app name, prefixed with the address."""
+        primary = device.name or getattr(device.app, "name", "") or "?"
+        if device.individual_address:
+            return f"{device.individual_address} {primary}"
+        return primary
 
     def _device_matches(self, device: Device, flt: str) -> bool:
         """Case-insensitive match of a device against the filter (name, address, app name)."""
@@ -314,9 +355,15 @@ class DevicesPanel:
             )
 
             imgui.separator()
+            if self._popup_error:
+                imgui.text_colored(imgui.ImVec4(1.0, 0.4, 0.4, 1.0), self._popup_error)
             if imgui.button(S.BTN_ADD, imgui.ImVec2(75, 0)):
-                self._on_create_area(self._popup_area_number, self._popup_name)
-                imgui.close_current_popup()
+                try:
+                    self._on_create_area(self._popup_area_number, self._popup_name)
+                    self._popup_error = ""
+                    imgui.close_current_popup()
+                except ValueError as exc:
+                    self._popup_error = str(exc)
             imgui.same_line()
             if imgui.button(S.BTN_CANCEL, imgui.ImVec2(75, 0)):
                 imgui.close_current_popup()
@@ -341,14 +388,20 @@ class DevicesPanel:
             )
 
             imgui.separator()
+            if self._popup_error:
+                imgui.text_colored(imgui.ImVec4(1.0, 0.4, 0.4, 1.0), self._popup_error)
             if imgui.button(S.BTN_ADD, imgui.ImVec2(75, 0)):
-                if self._popup_target_area:
-                    self._on_create_line(
-                        self._popup_target_area.id,
-                        self._popup_line_number,
-                        self._popup_name,
-                    )
-                imgui.close_current_popup()
+                try:
+                    if self._popup_target_area:
+                        self._on_create_line(
+                            self._popup_target_area.id,
+                            self._popup_line_number,
+                            self._popup_name,
+                        )
+                    self._popup_error = ""
+                    imgui.close_current_popup()
+                except ValueError as exc:
+                    self._popup_error = str(exc)
             imgui.same_line()
             if imgui.button(S.BTN_CANCEL, imgui.ImVec2(75, 0)):
                 imgui.close_current_popup()

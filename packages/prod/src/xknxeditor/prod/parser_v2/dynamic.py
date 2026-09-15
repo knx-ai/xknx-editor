@@ -132,7 +132,9 @@ class DynamicTreeBuilder:
         # Choose on an inactive union member renders nothing (see ChooseWhenNode). Without this we
         # render every union member's Choose branch, duplicating content (issue: MDT Glas push
         # button "Display mode" — two ViewMode union members both rendered).
-        self._union_sibling_refs: dict[str, set[str]] = self._build_union_sibling_refs(app)
+        self._union_sibling_refs: dict[str, set[str]] = self._build_union_sibling_refs(
+            app
+        )
         # Some applications (e.g. simple power supplies / couplers) carry no <Dynamic> section, or
         # one that produces no tree. Such a device has no parameters/objects to show — build an
         # empty tree so it still appears in the project instead of failing to load.
@@ -426,7 +428,9 @@ def _prune_inactive(
     result: list[UiNode] = []
     for node in nodes:
         if isinstance(node, (UiTab, UiParameterBlock)):
-            has_co, has_inst = _subtree_activeness(node, instantiated, instantiated_nums)
+            has_co, has_inst = _subtree_activeness(
+                node, instantiated, instantiated_nums
+            )
             if has_co and not has_inst:
                 _collect_refs(node, dropped_params, dropped_cos)
                 continue
@@ -477,9 +481,7 @@ class DynamicUI:
         the reached member wins, not a sibling carrying a stale explicit value from an inactive
         branch (which would drop a freshly-activated member's content)."""
         self._state.reset_active()
-        self._tree.eval(
-            EvalContext(self._state, idx=self._idx, union_suppress=False)
-        )
+        self._tree.eval(EvalContext(self._state, idx=self._idx, union_suppress=False))
         self._state.snapshot_discovered_active()
 
     def ui(self) -> list[UiNode]:

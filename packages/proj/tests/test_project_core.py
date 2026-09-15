@@ -11,6 +11,7 @@ from xknxeditor.proj.core.addressing import (
     parse_ia,
     ranges_for,
 )
+from xknxeditor.proj.models import ComObject, Device
 
 PRODUCT = "M-0001_H-x-1_P-1"
 
@@ -33,13 +34,24 @@ def _new(
 
 def test_skeleton_mirrors_ets(tmp_path: Path):
     svc, pid = _new(tmp_path)
-    # one installation (index 0) with a backbone area on the IP medium, empty group addresses
+    # installation 0 with the default KNX topology: IP backbone (0.0), plus Area 1 with an IP main
+    # line (1.0) and a TP line (1.1) that hosts end devices; empty group addresses
     assert [i.index for i in svc.installations(pid)] == [0]
     topo = svc.topology(pid, 0)
+    assert [a.address for a in topo.areas] == [0, 1]
+    # backbone: Area 0 / Line 0 on the IP medium
     assert topo.areas[0].address == 0
     assert topo.areas[0].lines[0].address == 0
     assert topo.areas[0].lines[0].segments[0].medium_type == "MT-5"
+    # Area 1: IP main line (1.0) + TP device line (1.1)
+    assert [ln.address for ln in topo.areas[1].lines] == [0, 1]
+    assert topo.areas[1].lines[0].segments[0].medium_type == "MT-5"
+    assert topo.areas[1].lines[1].segments[0].medium_type == "MT-0"
     assert svc.group_addresses(pid) == []
+    # a default building named after the project file ("p.xknx" -> "p")
+    assert [(s.name, s.space_type) for s in svc.space_tree(pid, 0)] == [
+        ("p", "Building")
+    ]
     project = svc.project(pid)
     assert project.name == "New project"
     assert project.group_address_style == "ThreeLevel"
@@ -47,13 +59,13 @@ def test_skeleton_mirrors_ets(tmp_path: Path):
 
 def test_topology_edits(tmp_path: Path):
     svc, pid = _new(tmp_path)
-    area = svc.create_area(pid, 0, 1, "Area")
+    area = svc.create_area(pid, 0, 2, "Area")
     svc.create_line(pid, area, 0, "Line")
-    seg = svc.topology(pid, 0).areas[1].lines[0].segments[0].id
+    seg = svc.topology(pid, 0).areas[2].lines[0].segments[0].id
     dev = svc.add_device(pid, seg, PRODUCT, address=1, name="D")
     ga = svc.create_group_address(pid, 0, 1, "GA")
-    # the user-created area is a sibling of the backbone area
-    assert [a.address for a in svc.topology(pid, 0).areas] == [0, 1]
+    # the user-created area sits beside the seeded backbone (0) and device (1) areas
+    assert [a.address for a in svc.topology(pid, 0).areas] == [0, 1, 2]
     assert [d.id for d in svc.devices(pid)] == [dev]
     assert [g.id for g in svc.group_addresses(pid)] == [ga]
 
@@ -145,6 +157,41 @@ def test_sync_device_com_objects_add_remove_keep_undo(tmp_path: Path):
     # redo re-applies the sync
     svc.redo(pid)
     assert set(cos()) == {"O-2_R-1", "O-3_R-1"}
+
+
+def test_sync_device_com_objects_preserves_text_override_on_undo(tmp_path: Path):
+    svc, pid = _new(tmp_path)
+    seg = _backbone_segment(svc, pid)
+    dev = svc.add_device(
+        pid, seg, PRODUCT, address=1, name="D", com_objects=[("O-1_R-1", None)]
+    )
+
+    def o1() -> ComObject:
+        return next(c for c in svc.devices(pid)[0].com_objects if c.ref_id == "O-1_R-1")
+
+    # Pin a per-instance text override on the row (import-only; no editor setter).
+    session = svc._state(pid).session
+    row = session.get(ComObject, o1().id)
+    assert row is not None
+    row.text_override = "Kitchen"
+    row.function_text_override = "Switch"
+    row.description_override = "note"
+    session.commit()
+
+    # Sync drops O-1 (not in the target), then undo must restore it with its overrides intact.
+    svc.sync_device_com_objects(pid, dev, [("O-2_R-1", None)])
+    assert {c.ref_id for c in svc.devices(pid)[0].com_objects} == {"O-2_R-1"}
+    svc.undo(pid)
+    restored = o1()
+    assert (
+        restored.text_override,
+        restored.function_text_override,
+        restored.description_override,
+    ) == (
+        "Kitchen",
+        "Switch",
+        "note",
+    )
 
 
 def test_set_parameter_and_sync_com_objects_is_one_undo_step(tmp_path: Path):
@@ -363,9 +410,9 @@ def test_multiple_installations(tmp_path: Path):
     assert [i.index for i in svc.installations(pid)] == [0, 1]
     assert [a.address for a in svc.topology(pid, 1).areas] == [0]  # its own backbone
 
-    svc.create_area(pid, 0, 1, "A in 0")
+    svc.create_area(pid, 0, 2, "A in 0")
     svc.create_area(pid, 1, 7, "A in 1")
-    assert [a.address for a in svc.topology(pid, 0).areas] == [0, 1]
+    assert [a.address for a in svc.topology(pid, 0).areas] == [0, 1, 2]
     assert [a.address for a in svc.topology(pid, 1).areas] == [0, 7]
 
     svc.create_group_address(pid, 0, 1, "GA in 0")
@@ -375,6 +422,22 @@ def test_multiple_installations(tmp_path: Path):
     while svc.undo(pid):
         pass
     assert [i.index for i in svc.installations(pid)] == [0]
+
+
+def test_create_area_rejects_duplicate_address(tmp_path: Path):
+    """The skeleton seeds Areas 0 and 1; re-creating either address must be refused so the topology
+    never holds two areas with the same address (which would break coupler pass-through lookups)."""
+    svc, pid = _new(tmp_path)
+    with pytest.raises(ValueError, match="Area address 1 already used"):
+        svc.create_area(pid, 0, 1, "dup")
+
+
+def test_create_line_rejects_duplicate_address(tmp_path: Path):
+    """Area 1 ships with lines 0 and 1; re-creating an existing line address must be refused."""
+    svc, pid = _new(tmp_path)
+    area_1 = next(a.id for a in svc.topology(pid, 0).areas if a.address == 1)
+    with pytest.raises(ValueError, match="Line address 1 already used"):
+        svc.create_line(pid, area_1, 1, "dup")
 
 
 def test_remove_device_undo_restores_subtree(tmp_path: Path):
@@ -426,41 +489,58 @@ def test_add_and_remove_segment(tmp_path: Path):
 
 def test_remove_area_cascades_and_undo(tmp_path: Path):
     svc, pid = _new(tmp_path)
-    area = svc.create_area(pid, 0, 1, "Area")
+    area = svc.create_area(pid, 0, 2, "Area")
     svc.create_line(pid, area, 0, "Line")
-    seg = svc.topology(pid, 0).areas[1].lines[0].segments[0].id
+    seg = svc.topology(pid, 0).areas[2].lines[0].segments[0].id
     svc.add_device(pid, seg, PRODUCT, address=1, name="D")
 
     svc.remove_area(pid, area)
-    assert [a.address for a in svc.topology(pid, 0).areas] == [0]  # only backbone left
+    assert [a.address for a in svc.topology(pid, 0).areas] == [
+        0,
+        1,
+    ]  # seeded areas remain
     assert svc.devices(pid) == []  # the nested device went too
 
     svc.undo(pid)
-    assert [a.address for a in svc.topology(pid, 0).areas] == [0, 1]
+    assert [a.address for a in svc.topology(pid, 0).areas] == [0, 1, 2]
     assert [d.name for d in svc.devices(pid)] == ["D"]
 
 
 def test_rename_and_undo(tmp_path: Path):
     svc, pid = _new(tmp_path)
-    area = svc.create_area(pid, 0, 1, "Area")
+    area = svc.create_area(pid, 0, 2, "Area")
     seg = _backbone_segment(svc, pid)
     dev = svc.add_device(pid, seg, PRODUCT, address=1, name="Old")
 
     svc.rename_area(pid, area, "Renamed")
     svc.set_device_name(pid, dev, "New")
-    assert svc.topology(pid, 0).areas[1].name == "Renamed"
+    assert svc.topology(pid, 0).areas[2].name == "Renamed"
     assert svc.devices(pid)[0].name == "New"
 
     svc.undo(pid)  # device name
     svc.undo(pid)  # area name
-    assert svc.topology(pid, 0).areas[1].name == "Area"
+    assert svc.topology(pid, 0).areas[2].name == "Area"
     assert svc.devices(pid)[0].name == "Old"
+
+
+def test_set_device_description_and_undo(tmp_path: Path):
+    svc, pid = _new(tmp_path)
+    seg = _backbone_segment(svc, pid)
+    dev = svc.add_device(pid, seg, PRODUCT, address=1, name="D")
+
+    svc.set_device_description(pid, dev, "Feeds the workshop lights")
+    assert svc.device(pid, dev).description == "Feeds the workshop lights"
+
+    svc.undo(pid)
+    assert svc.device(pid, dev).description == ""  # add_device leaves it empty
+    svc.redo(pid)
+    assert svc.device(pid, dev).description == "Feeds the workshop lights"
 
 
 def test_move_device(tmp_path: Path):
     svc, pid = _new(tmp_path)
     backbone = _backbone_segment(svc, pid)
-    area = svc.create_area(pid, 0, 1, "Area")
+    area = svc.create_area(pid, 0, 2, "Area")
     svc.create_line(pid, area, 0, "Line")
     other = svc.topology(pid, 0).areas[1].lines[0].segments[0].id
 
@@ -654,6 +734,30 @@ def test_device_info_carries_refs(tmp_path: Path):
     assert info.individual_address == "0.0.5"
     assert info.product_ref_id == "M-0162_H-x-2_P-y"
     assert info.hardware2program_ref_id == "M-0162_H-x-2_HP-0009-20-98C4"
+    assert (
+        info.ip_config is None
+    )  # no <IPConfig> unless imported from an IP router/interface
+
+
+def test_device_info_exposes_ip_config(tmp_path: Path):
+    svc, pid = _new(tmp_path)
+    seg = _backbone_segment(svc, pid)
+    dev = svc.add_device(pid, seg, PRODUCT, address=5, name="Router")
+    # IPConfig is import-only provenance (no editor setter); pin it on the row directly.
+    session = svc._state(pid).session
+    row = session.get(Device, dev)
+    assert row is not None
+    row.ip_config = {
+        "Assign": "Fixed",
+        "IPAddress": "192.168.1.10",
+        "SubnetMask": "255.255.255.0",
+    }
+    session.commit()
+    assert svc.device(pid, dev).ip_config == {
+        "Assign": "Fixed",
+        "IPAddress": "192.168.1.10",
+        "SubnetMask": "255.255.255.0",
+    }
 
 
 def test_ia_format_parse():
@@ -687,9 +791,8 @@ def test_next_free_individual_address(tmp_path: Path):
 def test_set_individual_address_moves_to_line(tmp_path: Path):
     svc, pid = _new(tmp_path)
     backbone = _backbone_segment(svc, pid)
-    area = svc.create_area(pid, 0, 1, "Area")
-    svc.create_line(pid, area, 1, "Line")  # area 1 / line 1
-    other = svc.topology(pid, 0).areas[1].lines[0].segments[0].id
+    # the seeded 1.1 TP line is where a device moved to "1.1.x" should land
+    other = svc.topology(pid, 0).areas[1].lines[1].segments[0].id
 
     dev = svc.add_device(pid, backbone, PRODUCT, address=9, name="D")
     svc.set_individual_address(pid, dev, "1.1.5")  # move onto area 1 / line 1, octet 5

@@ -774,6 +774,55 @@ class ProjectStrings:
         return _("Filter log")
 
     @property
+    def PROJECT_LOG_DECRYPT(self) -> str:
+        return _("Decrypt comments")
+
+    @property
+    def PROJECT_LOG_EXTRACT(self) -> str:
+        return _("Extract from Knx.Ets.Common.dll…")
+
+    @property
+    def PROJECT_LOG_DECRYPT_HINT(self) -> str:
+        return _(
+            "ETS encrypts the log comments. Extract the decryption key from your own ETS "
+            "installation's Knx.Ets.Common.dll to read them; nothing is sent anywhere."
+        )
+
+    @property
+    def PROJECT_LOG_ENCRYPTED(self) -> str:
+        return _("Comments are encrypted")
+
+    @property
+    def PROJECT_LOG_DECRYPTED(self) -> str:
+        return _("Comments decrypted")
+
+    @property
+    def PROJECT_LOG_EXTRACTING(self) -> str:
+        return _("Extracting key…")
+
+    @property
+    def PROJECT_LOG_EXTRACT_DONE(self) -> str:
+        return _("Key extracted; comments decrypted")
+
+    @property
+    def PROJECT_LOG_NO_BACKEND(self) -> str:
+        return _(
+            "No .NET runtime found (install the .NET SDK, or run on Windows with ETS)."
+        )
+
+    @property
+    def PROJECT_LOG_DLL_FILTER(self) -> str:
+        return _("KNX common assembly")
+
+    @property
+    def PROJECT_LOG_ALL_FILES(self) -> str:
+        return _("All files")
+
+    @property
+    def PROJECT_LOG_CREDIT(self) -> str:
+        return _("Based on OpenKNXproducer")
+
+    @property
     def CONFIGURE_ORDER_NUMBER(self) -> str:
         return _("Order number")
 
@@ -812,6 +861,29 @@ class ProjectStrings:
     @property
     def GA_ASSIGNED_OBJECTS(self) -> str:
         return _("Assigned objects")
+
+    @property
+    def GA_COL_DEVICE(self) -> str:
+        return _("Device")
+
+    @property
+    def GA_COL_OBJECT(self) -> str:
+        return _("Object")
+
+    @property
+    def GA_COL_SENDING(self) -> str:
+        return _("S")
+
+    @property
+    def GA_COL_SENDING_TOOLTIP(self) -> str:
+        return _(
+            "S = Sending. This object sends its value to the group address; "
+            "the others only receive it."
+        )
+
+    @property
+    def GA_OBJECT_OPEN_TOOLTIP(self) -> str:
+        return _("Click to open this device in the editor")
 
     @property
     def CONFIGURE_NO_DEVICES(self) -> str:
@@ -1014,6 +1086,30 @@ class ProjectStrings:
     @property
     def CONFIGURE_PROGRAM_REF(self) -> str:
         return _("Program ref")
+
+    @property
+    def CONFIGURE_IP_CONFIG(self) -> str:
+        return _("IP configuration")
+
+    @property
+    def CONFIGURE_IP_ASSIGN(self) -> str:
+        return _("Assignment")
+
+    @property
+    def CONFIGURE_IP_ADDRESS(self) -> str:
+        return _("IP address")
+
+    @property
+    def CONFIGURE_IP_SUBNET(self) -> str:
+        return _("Subnet mask")
+
+    @property
+    def CONFIGURE_IP_GATEWAY(self) -> str:
+        return _("Default gateway")
+
+    @property
+    def CONFIGURE_IP_MAC(self) -> str:
+        return _("MAC address")
 
     @property
     def CONFIGURE_OPEN_MANUAL(self) -> str:
@@ -1334,6 +1430,17 @@ class ProjectStrings:
     @property
     def CONTEXT_DUPLICATE(self) -> str:
         return _("Duplicate")
+
+    @property
+    def DEVICE_DELETE_TITLE(self) -> str:
+        return _("Delete device")
+
+    @property
+    def DEVICE_DELETE_CONFIRM(self) -> str:
+        return _(
+            "Delete '{name}'? Its com-objects and group-address links are removed and its "
+            "individual address is freed. This can be undone."
+        )
 
     @property
     def POPUP_NEW_AREA(self) -> str:

@@ -18,7 +18,7 @@ def _new(tmp_path: Path) -> tuple[ProjectService, str]:
 
 def _device(svc: ProjectService, pid: str, name: str) -> int:
     """A device on a fresh area/line/segment (needed so ``unassigned_devices`` can find it)."""
-    area = svc.create_area(pid, 0, 1, "A")
+    area = svc.create_area(pid, 0, 2, "A")
     line = svc.create_line(pid, area, 1, "L")
     session = svc._state(pid).session  # type: ignore[attr-defined]
     segment = session.query(Segment).filter_by(line_id=line).first()
@@ -46,10 +46,13 @@ def test_create_rename_set_type_with_undo(tmp_path: Path) -> None:
     building = svc.create_space(pid, 0, "Building", "Haus")
     floor = svc.create_space(pid, 0, "Floor", "OG", parent_id=building)
     tree = _tree(svc, pid)
-    assert [(s.id, s.name, s.space_type) for s in tree] == [
-        (building, "Haus", "Building")
+    # index 0 is the seeded default building (named after the "p.xknx" file); "Haus" follows it
+    assert [(s.name, s.space_type) for s in tree] == [
+        ("p", "Building"),
+        ("Haus", "Building"),
     ]
-    assert [(c.id, c.name, c.space_type) for c in tree[0].children] == [
+    assert tree[1].id == building
+    assert [(c.id, c.name, c.space_type) for c in tree[1].children] == [
         (floor, "OG", "Floor")
     ]
 

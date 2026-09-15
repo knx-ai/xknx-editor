@@ -50,13 +50,6 @@ def _space_type_presets() -> list[tuple[str, str]]:
     ]
 
 
-def _space_type_label(code: str) -> str:
-    for label, c in _space_type_presets():
-        if c == code:
-            return label
-    return code or S.SPACES_TYPE_ROOM
-
-
 def _default_child_type_index(parent_type: str | None) -> int:
     """Sensible default type for a new child, given its parent's type (index into the presets):
     a building holds floors, a floor holds rooms, everything else defaults to a room."""
@@ -119,6 +112,12 @@ class SpacesPanel:
         self._new_space_type = 0  # index into _space_type_presets()
         self._space_rename_buf = ""
         self._assign_filter = ""
+        # A popup requested from inside a context menu must be opened one scope up, not inside the
+        # context-menu popup: imgui.open_popup() and begin_popup() only match when called in the
+        # same window/id scope. Opening from within the context menu (a different popup window)
+        # registers the popup under a mismatched id, so begin_popup() at the tree scope never sees
+        # it. The context menu stores its id here; the tree scope opens it (see _open_if_pending).
+        self._pending_popup_id: str | None = None
 
     def render(self) -> None:
         tree = self._get_space_tree()
@@ -159,8 +158,11 @@ class SpacesPanel:
         # The context menu and the space's own popups must run whether the node is expanded or not
         # (a collapsed node can still be renamed/moved/deleted), so render them before the return.
         self._render_space_context_menu(space)
+        self._open_if_pending(f"##newsub{space.id}")
         self._render_new_space_popup(space.id, f"##newsub{space.id}")
+        self._open_if_pending(f"##renspace{space.id}")
         self._render_space_rename_popup(space.id)
+        self._open_if_pending(f"##delspace{space.id}")
         self._render_space_delete_confirm(space.id)
         self._render_assign_device_popup(space.id)
         if not open_node:
@@ -190,6 +192,13 @@ class SpacesPanel:
             self._render_new_function_popup(space.id)
         imgui.tree_pop()
 
+    def _open_if_pending(self, popup_id: str) -> None:
+        """Open ``popup_id`` here if a context menu requested it. Called at the tree scope, the
+        same scope as the matching begin_popup(), so the ids line up (see _pending_popup_id)."""
+        if self._pending_popup_id == popup_id:
+            self._pending_popup_id = None
+            imgui.open_popup(popup_id)
+
     def _render_space_context_menu(self, space: "SpaceInfo") -> None:
         if self._on_rename_space is None:  # editing disabled -> no menu
             return
@@ -201,10 +210,10 @@ class SpacesPanel:
         ):
             self._new_space_name = ""
             self._new_space_type = _default_child_type_index(space.space_type)
-            imgui.open_popup(f"##newsub{space.id}")
+            self._pending_popup_id = f"##newsub{space.id}"
         if imgui.menu_item(S.SPACES_RENAME, "", False)[0]:
             self._space_rename_buf = space.name
-            imgui.open_popup(f"##renspace{space.id}")
+            self._pending_popup_id = f"##renspace{space.id}"
         if self._on_set_space_type is not None and imgui.begin_menu(S.SPACES_TYPE):
             for label, code in _space_type_presets():
                 if imgui.menu_item(label, "", space.space_type == code)[0]:
@@ -224,7 +233,7 @@ class SpacesPanel:
             self._on_remove_space is not None
             and imgui.menu_item(S.SPACES_DELETE, "", False)[0]
         ):
-            imgui.open_popup(f"##delspace{space.id}")
+            self._pending_popup_id = f"##delspace{space.id}"
         imgui.end_popup()
 
     def _move_targets(self, moving_id: int) -> "list[tuple[SpaceInfo, int]]":
@@ -443,7 +452,14 @@ class SpacesPanel:
         leaf = self._device_label(device)
         if detail:
             leaf = f"{leaf}  — {detail}"
-        if imgui.selectable(f"{leaf}##spdev{device.id}", False)[0]:
+        # allow_overlap: the "Without space" section draws an "Assign device" button via
+        # same_line() over this full-width selectable. Without the flag the selectable (submitted
+        # first) claims the click and the button never fires.
+        if imgui.selectable(
+            f"{leaf}##spdev{device.id}",
+            False,
+            imgui.SelectableFlags_.allow_overlap,
+        )[0]:
             self._on_select_device_id(device.id)
         hovered = imgui.is_item_hovered()  # capture before the context menu below
         has_menu = bool(device.individual_address) or (
@@ -485,13 +501,14 @@ class SpacesPanel:
             if imgui.menu_item(S.SPACES_FN_RENAME, "", False)[0]:
                 self._rename_fn = function.id
                 self._rename_buf = function.name
-                imgui.open_popup(f"##renfn{function.id}")
+                self._pending_popup_id = f"##renfn{function.id}"
             if (
                 self._on_remove_function is not None
                 and imgui.menu_item(S.SPACES_FN_DELETE, "", False)[0]
             ):
                 self._on_remove_function(function.id)
             imgui.end_popup()
+        self._open_if_pending(f"##renfn{function.id}")
         self._render_rename_popup(function.id)
         if not open_node:
             return

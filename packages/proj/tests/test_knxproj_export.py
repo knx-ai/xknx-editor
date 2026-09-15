@@ -5,6 +5,7 @@ import json
 import re
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 import pytest
 from sqlalchemy.orm import Session
@@ -16,8 +17,10 @@ from xknxeditor.proj.models import (
     Function,
     FunctionGroupAddress,
     GroupAddress,
+    Installation,
     Line,
     Space,
+    Trade,
 )
 
 
@@ -26,7 +29,7 @@ def test_export_import_round_trip(tmp_path: Path) -> None:
     svc = ProjectService()
     pid = svc.create(src, "P-RT")
 
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 1, "Line 1")
     segment_id = next(
         line.segments[0].id
@@ -104,7 +107,7 @@ def test_export_keeps_unlinked_com_objects(tmp_path: Path) -> None:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-UL")
-    seg = svc.create_line(pid, svc.create_area(pid, 0, 1, "A"), 1, "L")
+    seg = svc.create_line(pid, svc.create_area(pid, 0, 2, "A"), 1, "L")
     segment_id = next(
         line.segments[0].id
         for area in svc.topology(pid, 0).areas
@@ -158,7 +161,7 @@ def test_export_emits_com_object_flag_overrides(tmp_path: Path) -> None:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-FL")
-    seg = svc.create_line(pid, svc.create_area(pid, 0, 1, "A"), 1, "L")
+    seg = svc.create_line(pid, svc.create_area(pid, 0, 2, "A"), 1, "L")
     segment_id = next(
         line.segments[0].id
         for area in svc.topology(pid, 0).areas
@@ -200,11 +203,146 @@ def test_export_emits_com_object_flag_overrides(tmp_path: Path) -> None:
     )  # untouched object emits no flag attribute (inherits default)
 
 
+def test_export_emits_com_object_text_overrides(tmp_path: Path) -> None:
+    """A per-instance @Text/@FunctionText override (a group object renamed in ETS) must be re-emitted;
+    an object without an override emits neither attribute (inherits the application default)."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-TX")
+    seg = svc.create_line(pid, svc.create_area(pid, 0, 2, "A"), 1, "L")
+    segment_id = next(
+        line.segments[0].id
+        for area in svc.topology(pid, 0).areas
+        for line in area.lines
+        if line.id == seg
+    )
+    device_id = svc.add_device(
+        pid,
+        segment_id,
+        "M-1_H-1_P-1",
+        address=5,
+        name="Dev",
+        hardware2program_ref_id="M-1_H-1_HP-1",
+        com_objects=[("M-1_A-1_O-1_R-1", None), ("M-1_A-1_O-2_R-1", None)],
+    )
+    svc.close(pid)
+
+    # text_override/function_text_override/description_override are import-only (no editor setter),
+    # so pin them on the row.
+    with Session(make_engine(url_for(src))) as s:
+        device = s.query(Device).filter_by(id=device_id).one()
+        co1 = next(c for c in device.com_objects if c.ref_id == "M-1_A-1_O-1_R-1")
+        co1.text_override = "Kitchen light"
+        co1.function_text_override = "Switch"
+        co1.description_override = "free-text note"
+        s.commit()
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out)
+    with zipfile.ZipFile(out) as zf:
+        zero = next(n for n in zf.namelist() if n.endswith("/0.xml"))
+        xml = zf.read(zero).decode("utf-8")
+    refs = re.findall(r"<(?:\w+:)?ComObjectInstanceRef\b[^>]*>", xml)
+    o1 = next(r for r in refs if "O-1_R-1" in r)
+    o2 = next(r for r in refs if "O-2_R-1" in r)
+    assert 'Text="Kitchen light"' in o1
+    assert 'FunctionText="Switch"' in o1
+    assert 'Description="free-text note"' in o1
+    assert "Text=" not in o2  # untouched object inherits the app default
+    assert "Description=" not in o2
+
+
+def test_export_emits_ip_config(tmp_path: Path) -> None:
+    """A device's captured ``<IPConfig>`` (IP interface/router config) must be re-emitted verbatim
+    after ``<BinaryData>``; a device without one emits no ``<IPConfig>``."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-IP")
+    seg = svc.create_line(pid, svc.create_area(pid, 0, 2, "A"), 1, "L")
+    segment_id = next(
+        line.segments[0].id
+        for area in svc.topology(pid, 0).areas
+        for line in area.lines
+        if line.id == seg
+    )
+    device_id = svc.add_device(
+        pid,
+        segment_id,
+        "M-1_H-1_P-1",
+        address=5,
+        name="Router",
+        hardware2program_ref_id="M-1_H-1_HP-1",
+    )
+    svc.close(pid)
+
+    # ip_config is import-only (no editor setter), so pin it on the row.
+    with Session(make_engine(url_for(src))) as s:
+        s.query(Device).filter_by(id=device_id).one().ip_config = {
+            "Assign": "Fixed",
+            "IPAddress": "192.168.1.10",
+            "SubnetMask": "255.255.255.0",
+            "DefaultGateway": "192.168.1.1",
+        }
+        s.commit()
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out)
+    with zipfile.ZipFile(out) as zf:
+        zero = next(n for n in zf.namelist() if n.endswith("/0.xml"))
+        xml = zf.read(zero).decode("utf-8")
+
+    root = ET.fromstring(xml)
+    di = next(e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "DeviceInstance")
+    children = [c.tag.rsplit("}", 1)[-1] for c in di]
+    assert "IPConfig" in children
+    ip = next(c for c in di if c.tag.rsplit("}", 1)[-1] == "IPConfig")
+    assert ip.get("Assign") == "Fixed"
+    assert ip.get("IPAddress") == "192.168.1.10"
+    assert ip.get("SubnetMask") == "255.255.255.0"
+    assert ip.get("DefaultGateway") == "192.168.1.1"
+    # schema order: IPConfig comes after BinaryData (here BinaryData is absent, so it is last).
+    assert children[-1] == "IPConfig"
+
+
+def test_export_emits_unassigned_devices(tmp_path: Path) -> None:
+    """Devices captured from ``<UnassignedDevices>`` must be re-grafted as the last child of
+    ``<Topology>``; an installation without any emits no such container."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-UN")
+    svc.create_area(pid, 0, 2, "A")  # a placed area so Topology has areas too
+    svc.close(pid)
+
+    # unassigned_devices_xml is import-only (no editor setter), so pin it on the installation.
+    with Session(make_engine(url_for(src))) as s:
+        s.query(Installation).one().unassigned_devices_xml = [
+            '<DeviceInstance Id="D-99" Address="7" Name="Spare" />',
+            '<DeviceInstance Id="D-100" Address="8" Name="Spare 2" />',
+        ]
+        s.commit()
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out)
+    with zipfile.ZipFile(out) as zf:
+        zero = next(n for n in zf.namelist() if n.endswith("/0.xml"))
+        xml = zf.read(zero).decode("utf-8")
+
+    root = ET.fromstring(xml)
+    topo = next(e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "Topology")
+    topo_children = [c.tag.rsplit("}", 1)[-1] for c in topo]
+    assert topo_children[-1] == "UnassignedDevices"  # last child of Topology
+    unassigned = topo[-1]
+    ids = [
+        d.get("Id") for d in unassigned if d.tag.rsplit("}", 1)[-1] == "DeviceInstance"
+    ]
+    assert ids == ["D-99", "D-100"]  # both preserved, in order
+
+
 def test_commissioning_state_round_trip(tmp_path: Path) -> None:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-CS")
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 1, "Line 1")
     segment_id = next(
         line.segments[0].id
@@ -269,7 +407,7 @@ def test_export_emits_unfiltered_and_additional_group_addresses(tmp_path: Path) 
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-651")
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 1, "Line 1")
     ga_id = svc.create_group_address(pid, 0, 0x0801, "GA One")  # 1/0/1
     svc.close(pid)
@@ -424,7 +562,7 @@ def test_export_schema14_namespace_and_round_trip(tmp_path: Path) -> None:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-E5")
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 1, "Line 1")
     segment_id = next(
         line.segments[0].id
@@ -464,6 +602,67 @@ def test_export_schema14_namespace_and_round_trip(tmp_path: Path) -> None:
     gas = {g.text: g for g in rsvc.group_addresses(rpid)}
     assert "1/0/1" in gas
     assert gas["1/0/1"].name == "GA One"
+
+
+def _trade_context_in_export(tmp_path: Path, schema: str) -> str | None:
+    """Export a project carrying a Trade with a Context and return the emitted Trade@Context."""
+    src = tmp_path / f"src-{schema}.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-CTX")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
+    line_id = svc.create_line(pid, area_id, 1, "Line 1")
+    segment_id = next(
+        line.segments[0].id
+        for area in svc.topology(pid, 0).areas
+        if area.id == area_id
+        for line in area.lines
+        if line.id == line_id
+    )
+    device_id = svc.add_device(
+        pid,
+        segment_id,
+        "M-1_H-1_P-1",
+        address=5,
+        name="Dev",
+        hardware2program_ref_id="M-1_H-1_HP-1",
+    )
+    svc.close(pid)
+
+    from xknxeditor.proj.models import TradeDevice
+
+    with Session(make_engine(url_for(src))) as s:
+        device = s.get(Device, device_id)
+        assert device is not None
+        trade = Trade(name="Electrical", number="1", context="ctx-value", order=0)
+        trade.devices.append(TradeDevice(device=device, order=0))
+        device.segment.line.area.installation.trades.append(trade)
+        s.commit()
+
+    out = tmp_path / f"out-{schema}.knxproj"
+    export_knxproj(src, out, schema=schema)
+    with zipfile.ZipFile(out) as zf:
+        trade_el = None
+        for entry in zf.namelist():
+            if not entry.endswith(".xml"):
+                continue
+            root = ET.fromstring(zf.read(entry))
+            trade_el = next(
+                (e for e in root.iter() if e.tag.rsplit("}", 1)[-1] == "Trade"), None
+            )
+            if trade_el is not None:
+                break
+    assert trade_el is not None
+    return trade_el.get("Context")
+
+
+def test_schema14_export_omits_trade_context(tmp_path: Path) -> None:
+    """The project/14 Trade binding has no Context attribute; emitting it broke schema-14 export."""
+    assert _trade_context_in_export(tmp_path, "14") is None
+
+
+def test_schema20_export_keeps_trade_context(tmp_path: Path) -> None:
+    """From project/20 onward Context is valid and must survive."""
+    assert _trade_context_in_export(tmp_path, "20") == "ctx-value"
 
 
 def test_export_rejects_unknown_schema(tmp_path: Path) -> None:

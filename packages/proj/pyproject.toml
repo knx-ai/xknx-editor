@@ -5,6 +5,8 @@ description = "XKNX project library"
 license = "GPL-2.0-only"
 requires-python = ">=3.13"
 dependencies = [
+    "cryptography>=42.0; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'",
     "sqlalchemy>=2.0.0",
     "xknxeditor-namespaces",
     "xknxproject>=3.10",
@@ -16,5 +18,5 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/xknxeditor"]
-# Ship the C# key extractor (read by core.key_extract to compile via Mono at runtime).
-artifacts = ["src/xknxeditor/proj/core/_extract.cs"]
+# Ship the C# key extractors (read by core.key_extract to compile via .NET/Mono at runtime).
+artifacts = ["src/xknxeditor/proj/core/_extract.cs", "src/xknxeditor/proj/core/_extract_trace.cs"]

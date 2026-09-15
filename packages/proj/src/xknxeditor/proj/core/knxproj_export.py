@@ -29,6 +29,24 @@ Signature state of the exported archive:
   signed ``knx_master.xml`` from an existing project via :func:`read_master_xml` (the signature
   covers the master content, not the project folders, so it stays valid) or by fetching the
   current signed master with :func:`fetch_master_xml`.
+
+Known round-trip limitations. These are detected at import (see :mod:`..core.import_notes`),
+persisted on the project and echoed in :class:`ExportResult.import_notes` so the user is told what a
+round-trip merges or drops:
+
+- **Multiple installations**: the importer builds exactly one :class:`~..models.Installation`.
+  xknxproject flattens every ``<Installation>/Topology`` into one areas list, discarding the
+  installation boundary, so true per-installation separation is unrecoverable. Import merges the
+  topology by address (no duplicate rows); a line that would collide is dropped and counted.
+- **Unassigned devices** (``<Topology>/<UnassignedDevices>``): every device is modelled under a
+  Segment → Line → Area. A device not placed in any line has no home in the model and is dropped.
+- **IP interface/routing device config** and **``Function`` ``@Number``/``@Implements``**: rarely set
+  outside specialised projects; not modelled.
+- **Multi-segment lines in a project/14+20 export**: import now keeps one
+  :class:`~..models.Segment` per raw ``<Segment>`` (project/22+23), so each segment's own
+  ``DomainAddress`` and device membership survive a project/22+23 round-trip. But project/14+20 is
+  line-level (no ``<Segment>`` element), so a project/14+20 *export* of a multi-segment line
+  necessarily merges it back to the line — a schema limitation, reported at import.
 """
 
 from __future__ import annotations
@@ -47,7 +65,9 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from xknxeditor.proj.core import import_notes
 from xknxeditor.proj.core._dll_signer import sign_member_map
+from xknxeditor.proj.core.import_notes import ImportLoss
 from xknxeditor.proj.core.knxproj_signing import (
     SignatureAudit,
     audit_and_sign_folders,
@@ -60,6 +80,7 @@ from xknxeditor.proj.models import (
     Installation,
     Project,
     Space,
+    Trade,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,12 +149,15 @@ class ExportResult:
     application-program or hardware-to-program ids the installation references that are absent from
     the bundled manufacturer data - the importer looks these up in a dictionary and aborts
     with "The given key was not present in the dictionary" when one is missing. The caller should
-    surface both to the user. Both empty on a normal, self-contained export.
+    surface both to the user. Both empty on a normal, self-contained export. ``import_notes``: the
+    lossy-import notes carried on the project (see core.import_notes), echoed so the caller can
+    remind the user what a round-trip already merged or dropped. Empty for a lossless import.
     """
 
     schema: str
     unverifiable_folders: list[str] = field(default_factory=list[str])
     missing_references: list[str] = field(default_factory=list[str])
+    import_notes: list[ImportLoss] = field(default_factory=list[ImportLoss])
 
     def __str__(
         self,
@@ -383,11 +407,13 @@ def export_knxproj(
                 f"project schema — import ETS6-era .knxprod for a native project/23 export."
             )
     engine = make_engine(url_for(Path(source)))
+    import_notes_raw = ""
     try:
         with Session(engine) as session:
             project = session.query(Project).first()
             if project is None:
                 raise ValueError(f"{source} is not a project (no project row)")
+            import_notes_raw = project.import_notes
             if project_name:
                 # Override the exported ProjectInformation Name (transient: this session is never
                 # committed, so the source .xknx is untouched).
@@ -437,6 +463,7 @@ def export_knxproj(
         schema=schema,
         unverifiable_folders=audit.unverifiable,
         missing_references=missing_refs,
+        import_notes=import_notes.loads(import_notes_raw),
     )
 
 
@@ -527,6 +554,9 @@ class _Writer:
         schema = ns.rsplit("/", 1)[-1]
         self._schema = schema
         self._uses_segments = schema in {"22", "23"}
+        # Trade@Context only exists from project/20 onward; the v10-v14 Trade_t binding has no such
+        # attribute, so emitting it produces XML that fails schema-14 validation on re-read.
+        self._trade_has_context = schema in {"20", "21", "22", "23"}
         # BinaryData copy-protection flag is named differently per schema: project/23 (+22) call it
         # "DoNotCopy", project/20 "AutoCopy" (same boolean meaning, per the schema docs), project/14
         # has no such attribute. Emit the right one so the export validates.
@@ -615,7 +645,7 @@ class _Writer:
             "ProjectInformation",
             Name=project.name,
             GroupAddressStyle=project.group_address_style,
-            Comment="",
+            Comment=project.comment or None,
             LastUsedPuid=self._puid,
             Guid=project_guid,
             LastModified=project.last_modified or now,
@@ -753,12 +783,23 @@ class _Writer:
                 Id=f"{pid}-0_A-{a_seq}",
                 Address=area.address,
                 Name=area.name,
+                Comment=area.comment or None,
+                Description=area.description or None,
                 Puid=self._next_puid(),
             )
             for line in sorted(area.lines, key=lambda x: x.address):
                 l_seq += 1
                 line_id = f"{pid}-0_L-{l_seq}"
                 medium = line.segments[0].medium_type if line.segments else "MT-0"
+                # RF/PL DomainAddress lives on the Segment (project/22+23) or the Line (14+20).
+                line_domain = next(
+                    (
+                        s.domain_address
+                        for s in line.segments
+                        if s.domain_address is not None
+                    ),
+                    None,
+                )
                 # project/22+23 (segments) keeps MediumTypeRefId on the Segment; project/14+20 on the Line.
                 line_el = self._el(
                     area_el,
@@ -766,9 +807,13 @@ class _Writer:
                     Id=line_id,
                     Address=line.address,
                     Name=line.name,
+                    Comment=line.comment or None,
+                    Description=line.description or None,
                     MediumTypeRefId=None if self._uses_segments else medium,
+                    DomainAddress=None if self._uses_segments else line_domain,
                     Puid=self._next_puid(),
                 )
+                first_segment_el: ET.Element | None = None
                 for segment in line.segments:
                     if self._uses_segments:
                         s_seq += 1
@@ -778,8 +823,11 @@ class _Writer:
                             Id=f"{pid}-0_S-{s_seq}",
                             Number=segment.number,
                             MediumTypeRefId=segment.medium_type,
+                            DomainAddress=segment.domain_address,
                             Puid=self._next_puid(),
                         )
+                        if first_segment_el is None:
+                            first_segment_el = container
                     else:
                         container = line_el
                     for device in segment.devices:
@@ -789,18 +837,30 @@ class _Writer:
                         self._build_device(
                             container, device, di_id[device.id], ga_link_id
                         )
-                # Coupler "route regardless" pass-through addresses (KNX PR #651). Emitted on the
-                # Line (project/14+20 shape); newer schemas may also carry them on the Segment.
+                # Coupler "route regardless" pass-through addresses. The schema places
+                # <AdditionalGroupAddresses> on the Segment (project/22+23) or on the Line
+                # (project/14+20); it is the last child in either. The model stores them on the Line
+                # (one segment per line), so emit on the first segment when the target uses segments,
+                # else on the line.
                 extra = [
                     a for a in line.additional_group_addresses.split(",") if a.strip()
                 ]
                 if extra:
-                    agas = self._el(line_el, "AdditionalGroupAddresses")
+                    target = (
+                        first_segment_el
+                        if self._uses_segments and first_segment_el is not None
+                        else line_el
+                    )
+                    agas = self._el(target, "AdditionalGroupAddresses")
                     for addr in extra:
                         self._el(agas, "GroupAddress", Address=int(addr))
 
         if self._default_line_id is not None:
             inst.set("DefaultLine", self._default_line_id)
+
+        # <UnassignedDevices> (schema order: last child of <Topology>, after all <Area>). Devices not
+        # placed on a line, captured verbatim on import and re-grafted here so they round-trip.
+        self._build_unassigned_devices(topo, installation)
 
         self._build_locations(inst, installation, pid, di_id, ga_link_id)
 
@@ -810,7 +870,48 @@ class _Writer:
         roots = [gr for gr in installation.group_ranges if gr.parent_id is None]
         for group_range in sorted(roots, key=lambda x: x.range_start):
             gr_seq = self._build_range(ranges, group_range, pid, gr_seq, ga_link_id)
+
+        self._build_trades(inst, installation, di_id)
         return root
+
+    def _build_trades(
+        self,
+        inst_el: ET.Element,
+        installation: Installation,
+        di_id: dict[int, str],
+    ) -> None:
+        """Emit the ``<Trades>`` tree (Gewerke) after ``GroupAddresses`` (schema order). Each Trade
+        re-lists its devices as ``DeviceInstanceRef`` and nests its child trades."""
+        roots = [t for t in installation.trades if t.parent_id is None]
+        if not roots:
+            return
+        trades_el = self._el(inst_el, "Trades")
+        for trade in sorted(roots, key=lambda t: (t.order, t.id)):
+            self._build_trade(trades_el, trade, di_id)
+
+    def _build_trade(
+        self,
+        parent: ET.Element,
+        trade: Trade,
+        di_id: dict[int, str],
+    ) -> None:
+        trade_el = self._el(
+            parent,
+            "Trade",
+            Name=trade.name,
+            Number=trade.number or None,
+            Comment=trade.comment or None,
+            Description=trade.description or None,
+            CompletionStatus=trade.completion_status or None,
+            Context=(trade.context or None) if self._trade_has_context else None,
+            Puid=self._next_puid(),
+        )
+        for child in sorted(trade.children, key=lambda t: (t.order, t.id)):
+            self._build_trade(trade_el, child, di_id)
+        for link in sorted(trade.devices, key=lambda d: (d.order, d.id)):
+            ref = di_id.get(link.device_id)
+            if ref is not None:
+                self._el(trade_el, "DeviceInstanceRef", RefId=ref)
 
     def _build_locations(
         self,
@@ -820,10 +921,10 @@ class _Writer:
         di_id: dict[int, str],
         ga_link_id: dict[int, str],
     ) -> None:
-        roots = [s for s in installation.spaces if s.parent_id is None]
-        if not roots:
-            return
+        # Installation_t requires a <Locations> element (not optional), so emit the container even
+        # when the project has no spaces; ETS reads an empty Locations without complaint.
         locs = self._el(inst_el, "Locations")
+        roots = [s for s in installation.spaces if s.parent_id is None]
         counters = {"sp": 0, "f": 0, "gar": 0}
         for space in sorted(roots, key=lambda s: (s.order, s.id)):
             self._build_space(locs, space, pid, di_id, ga_link_id, counters)
@@ -845,7 +946,9 @@ class _Writer:
             Id=f"{pid}-0_BP-{counters['sp']}",
             Name=space.name,
             Number=space.number or None,
+            Usage=space.usage or None,
             Description=space.description or None,
+            Comment=space.comment or None,
             Puid=self._next_puid(),
         )
         # The Space content model is a strict sequence: nested Space* first, then DeviceInstanceRef*,
@@ -863,6 +966,8 @@ class _Writer:
                 Id=f"{pid}-0_F-{counters['f']}",
                 Name=fn.name,
                 Type=fn.function_type or None,
+                Comment=fn.comment or None,
+                Description=fn.description or None,
                 Puid=self._next_puid(),
             )
             gf = 0
@@ -899,6 +1004,8 @@ class _Writer:
             ProductRefId=device.product_ref_id,
             Hardware2ProgramRefId=device.hardware2program_ref_id,
             Description=device.description or None,
+            Comment=device.comment or None,
+            LastModified=device.last_modified or None,
             # Commissioning state ("loaded" ticks + serial / last download). Emit the flags
             # only when set; an absent attribute means "not loaded" (matching genuine exports and
             # round-trips).
@@ -964,6 +1071,9 @@ class _Writer:
                     "ComObjectInstanceRef",
                     RefId=_relidref(co.instance_ref_id or co.ref_id),
                     ChannelId=co.channel_id,
+                    Text=co.text_override or None,
+                    FunctionText=co.function_text_override or None,
+                    Description=co.description_override or None,
                     Links=links or None,
                     ReadFlag=_enable(co.read_flag),
                     WriteFlag=_enable(co.write_flag),
@@ -982,9 +1092,48 @@ class _Writer:
         # folder grouping of the device's group objects, captured verbatim on import and re-emitted
         # here so it round-trips (issue #14); xknxproject flattens it to channel ids and loses it.
         self._build_group_object_tree(di, device)
+        # <AdditionalAddresses> (schema order: after GroupObjectTree, before BinaryData). Extra
+        # individual addresses a coupler/interface reserves, captured on import and re-emitted here.
+        self._build_additional_addresses(di, device)
         # <BinaryData> (schema order: later still). A DCA's persisted state (e.g. the MDT DALI
         # "DaliGC16-Backup-Store") lives here; re-emit it verbatim so it round-trips.
         self._build_binary_data(di, device, device_id)
+        # <IPConfig> (schema order: after BinaryData, before Security). IP interface/router config
+        # (assign method, static IP/subnet/gateway/MAC), captured verbatim on import and re-emitted.
+        self._build_ip_config(di, device)
+
+    def _build_ip_config(self, di: ET.Element, device: Device) -> None:
+        """Re-emit the device's captured ``<IPConfig>`` attributes. Skipped when the device has none.
+
+        The stored dict holds only the attributes present in the source (local names), so emitting
+        them verbatim is a lossless round-trip. ``_el`` writes each as a string attribute."""
+        if device.ip_config:
+            self._el(di, "IPConfig", **device.ip_config)
+
+    def _build_additional_addresses(self, di: ET.Element, device: Device) -> None:
+        """Re-emit the device's extra individual addresses (``<AdditionalAddresses>``), e.g. the
+        addresses a coupler or IP interface reserves. Skipped when the device has none.
+
+        ``Address`` is optional in project/22+23 but required in project/14+20, so an address-less
+        entry (only possible from a 22/23 source) is dropped when exporting to an older schema — it
+        cannot be represented there and would make the archive schema-invalid."""
+        entries = [
+            addr
+            for addr in device.additional_addresses
+            if self._uses_segments or addr.address is not None
+        ]
+        if not entries:
+            return
+        container = self._el(di, "AdditionalAddresses")
+        for addr in entries:
+            self._el(
+                container,
+                "Address",
+                Address=addr.address,
+                Name=addr.name or None,
+                Description=addr.description or None,
+                Comment=addr.comment or None,
+            )
 
     def _build_group_object_tree(self, di: ET.Element, device: Device) -> None:
         """Re-emit the device's captured ``<GroupObjectTree>`` under ``di`` in the target namespace.
@@ -1025,6 +1174,32 @@ class _Writer:
         for child in src:
             self._graft(el, child)
         return el
+
+    def _build_unassigned_devices(
+        self, topo: ET.Element, installation: Installation
+    ) -> None:
+        """Re-emit the installation's captured ``<UnassignedDevices>`` under ``topo`` (last child of
+        ``<Topology>``). Each stored string is a namespace-stripped ``<DeviceInstance>`` subtree,
+        re-grafted in the target namespace. Skipped when there are none.
+
+        The captured subtrees carry project/20+ elements (e.g. GroupObjectTree, IPConfig), so they
+        are only emitted for schemas that define them; for project/14 the container is skipped rather
+        than writing XML the importer would reject."""
+        stored = installation.unassigned_devices_xml
+        if not stored:
+            return
+        schema = self._ns.rsplit("/", 1)[-1]
+        if not (schema.isdigit() and int(schema) >= 20):
+            logger.debug("schema %s has no UnassignedDevices; skipping", schema)
+            return
+        container = self._el(topo, "UnassignedDevices")
+        for raw in stored:
+            try:
+                src = ET.fromstring(raw)
+            except ET.ParseError:
+                logger.debug("skipping malformed stored UnassignedDevices entry")
+                continue
+            self._graft(container, src)
 
     def _build_module_instances(self, di: ET.Element, device: Device) -> None:
         if not device.module_instances:
@@ -1091,10 +1266,16 @@ class _Writer:
             RangeStart=group_range.range_start,
             RangeEnd=group_range.range_end,
             Name=group_range.name,
+            Comment=group_range.comment or None,
+            Description=group_range.description or None,
             # Coupler pass-through flag; emit only when set (absent means filtered).
             Unfiltered="true" if group_range.unfiltered else None,
             Puid=self._next_puid(),
         )
+        # GroupRange_t is a strict sequence: nested GroupRange* first, then GroupAddress*. Emitting
+        # addresses before child ranges violates the schema when a range holds both (Free style).
+        for child in sorted(group_range.children, key=lambda x: x.range_start):
+            seq = self._build_range(gr_el, child, pid, seq, ga_link_id)
         for ga in sorted(group_range.group_addresses, key=lambda x: x.address):
             self._el(
                 gr_el,
@@ -1105,9 +1286,9 @@ class _Writer:
                 Description=ga.description or None,
                 Comment=ga.comment or None,
                 DatapointType=ga.datapoint_type,
+                Central="true" if ga.central else None,
                 Unfiltered="true" if ga.unfiltered else None,
+                Global="true" if ga.is_global else None,
                 Puid=self._next_puid(),
             )
-        for child in sorted(group_range.children, key=lambda x: x.range_start):
-            seq = self._build_range(gr_el, child, pid, seq, ga_link_id)
         return seq

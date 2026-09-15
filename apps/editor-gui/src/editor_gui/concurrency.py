@@ -90,3 +90,30 @@ def io_guarded[T](
         return wrapper
 
     return decorator
+
+
+def revision_cached[T](fn: Callable[[Any], T]) -> Callable[[Any], T]:
+    """Cache a zero-arg service read by ``self.revision`` so a per-frame caller (a panel's ``render``)
+    does not re-hit the database while nothing changed.
+
+    In the immediate-mode GUI a panel's ``render()`` runs ~60x/s; an uncached read there is a 60 Hz
+    SQLite query + ORM rebuild that pins the CPU and keeps the app off idling. Making caching the
+    default for such reads removes that footgun: annotate the reader and it is memoised until the next
+    edit. The instance must expose an ``int`` ``revision`` (bumped on every mutation/undo/redo) and a
+    ``self._revision_cache`` dict that is cleared when the project closes/opens (so a cache built at
+    revision 0 for one project is not reused for the next, which also starts at revision 0). The value
+    is returned by shared reference; callers must treat it as read-only, as they already do for the
+    other cached reads. Stack ``@io_guarded`` above this so a cache-miss rebuild stays import-safe."""
+    key = fn.__name__
+
+    @wraps(fn)
+    def wrapper(self: Any) -> T:
+        cache: dict[str, tuple[int, Any]] = self._revision_cache
+        hit = cache.get(key)
+        if hit is not None and hit[0] == self.revision:
+            return cast(T, hit[1])
+        value = fn(self)
+        cache[key] = (self.revision, value)
+        return value
+
+    return wrapper

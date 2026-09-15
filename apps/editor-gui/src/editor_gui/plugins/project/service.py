@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from editor_gui.concurrency import io_guarded
+from editor_gui.concurrency import io_guarded, revision_cached
 from editor_gui.device import Device
 from editor_gui.plugins.project.ui.history import HistoryEntry
 from editor_gui.settings import config_dir
@@ -22,12 +22,15 @@ from xknxeditor.proj import ProjectService as _ProjectService
 from xknxeditor.proj import ProjectStorageError, ensure_sqlite_writable
 from xknxeditor.proj import import_knxproj as _import_knxproj
 from xknxeditor.proj.core.addressing import GroupAddressStyle, parse_ga
+from xknxeditor.proj.core.identity import qualified_com_object_ref
+from xknxeditor.proj.core.skeleton import MEDIUM_TP
 
 if TYPE_CHECKING:
     from editor_gui.plugins.base import Logger
     from editor_gui.plugins.catalog.service import CatalogService
     from xknxeditor.catalog import ProductSummary
     from xknxeditor.download.image import GroupCommunication
+    from xknxeditor.proj.core.import_notes import ImportLoss
     from xknxeditor.proj.core.service import (
         DeviceInfo,
         GroupRangeInfo,
@@ -88,7 +91,22 @@ def _parse_group_address(text: str) -> int | None:
     return None
 
 
-def _co_instance_ref_from_row(row: Any) -> ComObjectInstanceRef | None:
+def _qualified_com_object_ref(co_row: Any, app_program_id: str) -> str:
+    """The app-prefixed, per-instance-qualified com-object ref that the dynamic UI emits.
+
+    Thin adapter over :func:`xknxeditor.proj.core.identity.qualified_com_object_ref` for callers that
+    hold a persisted-row object (ORM ``ComObject`` or a stored-row namespace) rather than the raw
+    strings. The single source of truth for the mapping lives in the proj layer so display,
+    reconciliation, undo, and application upgrades all resolve instance identity identically.
+    """
+    return qualified_com_object_ref(
+        co_row.ref_id, getattr(co_row, "instance_ref_id", "") or "", app_program_id
+    )
+
+
+def _co_instance_ref_from_row(
+    row: Any, ref_id: str | None = None
+) -> ComObjectInstanceRef | None:
     def _e(v: bool | None) -> Enable | None:
         return None if v is None else (Enable.ENABLED if v else Enable.DISABLED)
 
@@ -105,7 +123,7 @@ def _co_instance_ref_from_row(row: Any) -> ComObjectInstanceRef | None:
     ):
         return None
     return ComObjectInstanceRef(
-        ref_id=row.ref_id,
+        ref_id=ref_id if ref_id is not None else row.ref_id,
         communication_flag=_e(row.communication_flag),
         read_flag=_e(row.read_flag),
         write_flag=_e(row.write_flag),
@@ -223,12 +241,13 @@ class _ProjectInfo:
 
 @dataclass
 class _ProjectTrace:
-    """One ETS project-log entry. ``comment`` is verbatim from the source (ETS encrypts it), so it
-    may be an opaque ciphertext string until decryption is wired up."""
+    """One project-log entry. ``comment`` is verbatim from the source (it is encrypted on disk);
+    ``comment_plain`` is the decrypted text when a trace key is installed, else ``None``."""
 
     date: str
     user_name: str
     comment: str
+    comment_plain: str | None = None
 
 
 @dataclass
@@ -266,6 +285,12 @@ class ProjectService:
         self._areas_cache: list[_Area] | None = None
         self._lines_cache: dict[int, list[_Line]] | None = None
         self._ga_cache: list[_GroupAddress] | None = None
+        # Per-frame tree reads for visible panels (Buildings, "Without space", GA view) are cached by
+        # revision via the @revision_cached decorator, keyed by method name in this dict, so a static
+        # panel does not re-query SQLite and rebuild the ORM tree every frame (that kept the app off
+        # idling and churned the GC). Cleared on _reset so one project's cache is never reused for the
+        # next. Adding a new per-frame read is now just the decorator, no bespoke cache fields.
+        self._revision_cache: dict[str, tuple[int, object]] = {}
         # Each lazy cache tracks the project version it was built at, independently. A single shared
         # counter is wrong: after an edit only the first cache read would rebuild (and stamp the
         # shared version), leaving the others returning stale data until the next edit.
@@ -693,6 +718,7 @@ class ProjectService:
         self._areas_cache = None
         self._lines_cache = None
         self._ga_cache = None
+        self._revision_cache.clear()
         self._devices_cache_version = -1
         self._topology_cache_version = -1
         self._ga_cache_version = -1
@@ -792,8 +818,12 @@ class ProjectService:
             # function/mode re-instantiation (default, i.e. all-None, flags) are also counted as
             # instantiated and thus shown/encoded rather than pruned away.
             coirs = [
-                _co_instance_ref_from_row(co_row)
-                or ComObjectInstanceRef(ref_id=co_row.ref_id)
+                _co_instance_ref_from_row(
+                    co_row, ref_id=_qualified_com_object_ref(co_row, app.program.id)
+                )
+                or ComObjectInstanceRef(
+                    ref_id=_qualified_com_object_ref(co_row, app.program.id)
+                )
                 for co_row in row.com_objects
             ]
             ia = self._svc.individual_address(self._pid, row.id) or ""
@@ -802,14 +832,27 @@ class ProjectService:
                 name=row.name,
                 app=app,
                 individual_address=ia,
+                description=row.description,
                 parameter_instance_refs=pirs,
                 module_instances=mis,
                 com_object_instance_refs=coirs,
             )
             for co_row in row.com_objects:
-                co = device.find_com_object(co_row.ref_id)
+                co = device.find_com_object(
+                    _qualified_com_object_ref(co_row, app.program.id)
+                )
                 if co is not None:
                     co.db_id = co_row.id
+                    # Carry the stored per-instance overrides so get_visible_com_objects prefers them
+                    # over the app default, and reflect them on the display object right away for the
+                    # panels that read device.com_objects directly.
+                    co.text_override = co_row.text_override
+                    co.function_text_override = co_row.function_text_override
+                    co.description = co_row.description_override or ""
+                    if co_row.text_override:
+                        co.name = co_row.text_override
+                    if co_row.function_text_override:
+                        co.function_text = co_row.function_text_override
             # Warm the lightweight views the panels read for every device, then drop the heavy
             # per-device DynamicUI evaluator (~15 MB each) — it is rebuilt lazily only when a device
             # is inspected or edited. This keeps memory bounded to the active device.
@@ -928,6 +971,18 @@ class ProjectService:
     def _installation(self) -> Any:
         assert self._pid is not None
         return self._svc.topology(self._pid, _INSTALLATION)
+
+    def _default_device_segment_id(self) -> int:
+        """Segment a new device lands on when no line is chosen: the first TP line (end devices
+        belong on a TP line, not the IP backbone/main line). Falls back to the very first segment
+        if the project has no TP line (e.g. an IP-only setup)."""
+        installation = self._installation()
+        for area in installation.areas:
+            for line in area.lines:
+                for segment in line.segments:
+                    if segment.medium_type == MEDIUM_TP:
+                        return segment.id
+        return installation.areas[0].lines[0].segments[0].id
 
     def _ensure_topology_cache(self) -> None:
         if (
@@ -1127,6 +1182,7 @@ class ProjectService:
         return result
 
     @io_guarded(list)
+    @revision_cached
     def get_group_range_tree(self) -> list["GroupRangeInfo"]:
         """The named group-address range tree (roots → children → GAs) for the GA view."""
         if self._pid is None:
@@ -1134,6 +1190,7 @@ class ProjectService:
         return self._svc.group_ranges(self._pid, _INSTALLATION)
 
     @io_guarded(list)
+    @revision_cached
     def get_space_tree(self) -> list["SpaceInfo"]:
         """The building/location tree (spaces → devices/functions) for the Buildings view."""
         if self._pid is None:
@@ -1162,17 +1219,36 @@ class ProjectService:
         )
 
     def get_project_traces(self) -> list[_ProjectTrace]:
-        """The ETS project log (ProjectInformation/ProjectTraces), in document order.
+        """The project log (ProjectInformation/ProjectTraces), in document order.
 
-        Comments are returned verbatim (ETS encrypts them); decrypting is a later phase.
+        Comments are stored verbatim (they are encrypted on disk); ``comment_plain`` is filled with
+        the decrypted text when a trace key has been installed (see :mod:`editor_gui.trace_key`).
         """
+        from xknxeditor.proj import decrypt_comment
+
         if self._pid is None:
             return []
         p = self._svc.project(self._pid)
         return [
-            _ProjectTrace(date=t.date, user_name=t.user_name, comment=t.comment)
+            _ProjectTrace(
+                date=t.date,
+                user_name=t.user_name,
+                comment=t.comment,
+                comment_plain=decrypt_comment(t.comment),
+            )
             for t in p.traces
         ]
+
+    def get_import_notes(self) -> list["ImportLoss"]:
+        """Lossy-import notes recorded when the current project was built from a ``.knxproj``
+        (data ETS/xknxproject carried that our store cannot fully represent). Empty when the
+        project was not imported or nothing was dropped."""
+        if self._pid is None:
+            return []
+        from xknxeditor.proj.core.import_notes import loads
+
+        p = self._svc.project(self._pid)
+        return loads(p.import_notes)
 
     def next_free_group_address(self) -> str | None:
         """The next unused group address, style-formatted (e.g. ``"0/0/2"``); None if no project."""
@@ -1440,7 +1516,7 @@ class ProjectService:
         if self._pid is None:
             return None
         if segment_id is None:
-            segment_id = self._installation().areas[0].lines[0].segments[0].id
+            segment_id = self._default_device_segment_id()
         if address is None:
             # Assign the next free individual address on the target line (standard behaviour), instead of
             # leaving the device address-less. Editable afterwards in Configure. If the line is full,
@@ -1597,6 +1673,7 @@ class ProjectService:
             param_id,
             value,
             [(ref, None) for ref in sorted(target)],
+            app_program_id=device.app.program.id,
         )
         return True
 
@@ -1667,6 +1744,18 @@ class ProjectService:
         dev = self.find_device_by_node_id(node_id)
         if dev is not None:
             dev.name = new_name
+        self._bump(structural=False)
+
+    def set_device_description(
+        self, node_id: int, old_description: str, new_description: str
+    ) -> None:
+        if self._pid is None or old_description == new_description:
+            return
+        self._svc.set_device_description(self._pid, node_id, new_description)
+        # In place, like a rename: description is metadata only, no structure/topology change.
+        dev = self.find_device_by_node_id(node_id)
+        if dev is not None:
+            dev.description = new_description
         self._bump(structural=False)
 
     def remove_device(self, node_id: int) -> None:
@@ -1740,7 +1829,9 @@ class ProjectService:
         setattr(co.flags, flag_name, value)
         row = self._find_com_object_row(co.db_id)
         if row is not None:
-            coir = _co_instance_ref_from_row(row) or ComObjectInstanceRef(ref_id=co_id)
+            coir = _co_instance_ref_from_row(row, ref_id=co_id) or ComObjectInstanceRef(
+                ref_id=co_id
+            )
             device.set_com_obj_instance_ref(co_id, coir)
         self._bump(structural=False)
 
@@ -1956,6 +2047,7 @@ class ProjectService:
         self._bump(structural=False)
 
     @io_guarded(list)
+    @revision_cached
     def get_unassigned_devices(self) -> "list[SpaceDeviceInfo]":
         # Per-frame read (Spaces panel "Without space" section): guard it like the other tree reads
         # so it bails to an empty list while a background import holds the IO lock and rewrites the

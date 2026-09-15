@@ -22,6 +22,7 @@ from xknxproject.exceptions import InvalidPasswordException, XknxProjectExceptio
 
 from editor_gui import __version__
 from editor_gui import signing_key as signing_key_store
+from editor_gui import trace_key as trace_key_store
 from editor_gui.certs import ensure_ca_bundle
 from editor_gui.concurrency import MainThreadExecutor
 from editor_gui.master_data import MasterDataInfo, load_master, master_xml_bytes
@@ -54,6 +55,9 @@ from xknxeditor.proj import (
     myknx_certificate_signer,
     signing_key_is_placeholder,
 )
+from xknxeditor.proj.core import import_notes
+from xknxeditor.proj.core.import_notes import ImportLoss
+from xknxeditor.proj.db import frame_db_profiler
 
 _REPO_URL = "https://github.com/knx-ai/xknx-editor"
 # Direct download of the Windows "compat" build (bundled Mesa software OpenGL, pure CPU) — the one that
@@ -228,6 +232,11 @@ class KnxGuiApp:
         self._toast_seen_ts = time.time()
         # Set by the export worker on success; the toast renderer turns it into a green toast.
         self._export_success_msg: str | None = None
+        # Lossy-import notes to show in a readable modal (set after a lossy import or before an
+        # export that echoes them); rendered by _render_import_notes_modal.
+        self._import_notes: list[ImportLoss] = []
+        self._import_notes_intro: str = ""
+        self._import_notes_requested = False
         # Set by the open/import worker when a network project is mirrored locally; the toast
         # renderer turns it into an info toast on the UI thread.
         self._mirror_notice: str | None = None
@@ -330,6 +339,9 @@ class KnxGuiApp:
         # Apply a previously extracted/saved signing key so exports are signed with it.
         if signing_key_store.apply_cached_key():
             self._log.info("signing key loaded")
+        # Apply a previously extracted project-log (trace) key so comments decrypt on open.
+        if trace_key_store.apply_cached_key():
+            self._log.info("trace key loaded")
         # Discover KNX gateways at startup and auto-connect to the last-used (or first) one.
         self._connection_plugin.autostart()
         # Best-effort check for a newer release on GitHub (unless the user disabled it).
@@ -527,6 +539,12 @@ class KnxGuiApp:
                     size=_human_size(size),
                     schema=labels.get(used_schema, f"project/{used_schema}"),
                 )
+                if result.import_notes:
+                    # Remind the user what the source .knxproj carried that this export omits. Set
+                    # state here (worker thread); the modal opens on the next UI frame via the flag.
+                    self._import_notes = result.import_notes
+                    self._import_notes_intro = S.IMPORT_NOTES_INTRO_EXPORT
+                    self._import_notes_requested = True
                 self._log.info(
                     "project exported", path=dest, certificate=signer is not None
                 )
@@ -819,6 +837,9 @@ class KnxGuiApp:
             self._password_prompt_requested = True
         else:
             self._clear_import_prompt()
+            if self._import_notes:
+                self._import_notes_intro = S.IMPORT_NOTES_INTRO_IMPORT
+                self._import_notes_requested = True
 
     def _begin_progress(self, text: str) -> None:
         self._progress_text = text
@@ -900,12 +921,16 @@ class KnxGuiApp:
             )
 
         self._project_service.build_progress = report
+        self._import_notes = []
         try:
             self._project_service.import_knxproj(
                 Path(source), Path(dest), password=password
             )
             # Import opens the freshly built .xknx; record it in Open Recent like a normal open.
             self._add_recent(dest)
+            # Lossy-import notes detected during the build; _poll_import raises the readable modal on
+            # the UI thread when this is non-empty (setting state here is thread-safe; imgui is not).
+            self._import_notes = self._project_service.get_import_notes()
             if self._project_service.mirroring_active:
                 self._mirror_notice = str(self._project_service.mirror_home)
         except InvalidPasswordException:
@@ -1353,8 +1378,13 @@ class KnxGuiApp:
             recent = self._recent_files()
             if imgui.begin_menu(S.MENU_OPEN_RECENT, bool(recent)):
                 for path in recent:
-                    if imgui.menu_item(Path(path).name, "", False)[0]:
+                    # Append the full path as a hidden id part: two recents can share a filename
+                    # (e.g. the same project on a share and locally), and a bare label would give
+                    # them the same imgui ID ("conflicting ID" warning, see _render_welcome).
+                    if imgui.menu_item(f"{Path(path).name}##{path}", "", False)[0]:
                         self._do_open_project(path)
+                    if imgui.is_item_hovered():
+                        imgui.set_tooltip(path)
                 imgui.end_menu()
             if imgui.menu_item(
                 S.MENU_SAVE_AS, "", False, self._project_service.is_open
@@ -1518,6 +1548,54 @@ class KnxGuiApp:
             imgui.close_current_popup()
         imgui.end_popup()
 
+    def _import_note_text(self, note: ImportLoss) -> str:
+        """Localized, human-readable line for one import-loss note (code -> message)."""
+        template = {
+            import_notes.MULTIPLE_INSTALLATIONS: S.IMPORT_NOTE_MULTIPLE_INSTALLATIONS,
+            import_notes.UNASSIGNED_DEVICES: S.IMPORT_NOTE_UNASSIGNED_DEVICES,
+            import_notes.COM_OBJECT_TEXT_OVERRIDES: S.IMPORT_NOTE_COM_OBJECT_TEXT_OVERRIDES,
+            import_notes.IP_CONFIG: S.IMPORT_NOTE_IP_CONFIG,
+            import_notes.MULTI_SEGMENT: S.IMPORT_NOTE_MULTI_SEGMENT,
+            import_notes.DROPPED_DUPLICATE_LINES: S.IMPORT_NOTE_DROPPED_DUPLICATE_LINES,
+        }.get(note.code)
+        if template is None:
+            # Unknown code (forward-compat): fall back to the raw code + count so nothing is hidden.
+            return f"{note.code} ({note.count})"
+        text = template.format(count=note.count)
+        if note.detail:
+            return f"{text} {S.IMPORT_NOTE_EXAMPLES.format(examples=note.detail)}"
+        return text
+
+    def _render_import_notes_modal(self) -> None:
+        if self._import_notes_requested:
+            imgui.open_popup(S.IMPORT_NOTES_TITLE)
+            self._import_notes_requested = False
+        imgui.set_next_window_size_constraints(
+            imgui.ImVec2(520.0, 0.0), imgui.ImVec2(1.0e9, 1.0e9)
+        )
+        if not imgui.begin_popup_modal(
+            S.IMPORT_NOTES_TITLE, None, imgui.WindowFlags_.always_auto_resize
+        )[0]:
+            return
+        if self._import_notes_intro:
+            imgui.text_wrapped(self._import_notes_intro)
+            imgui.spacing()
+        for note in self._import_notes:
+            imgui.bullet()
+            imgui.text_wrapped(self._import_note_text(note))
+        imgui.spacing()
+        imgui.separator()
+        if imgui.button(S.IMPORT_NOTES_CLOSE, imgui.ImVec2(120, 0)):
+            imgui.close_current_popup()
+        imgui.end_popup()
+
+    def watch_db_frame(self) -> None:
+        """Dev watchdog (XKNX_DEBUG_DB_FRAMES=1): log when the render thread keeps issuing DB queries
+        across frames in which the project did not change — an uncached per-frame read in a panel."""
+        msg = frame_db_profiler.end_frame(self._project_service.revision)
+        if msg:
+            self._log.warning(msg)
+
     def render_overlays(self) -> None:
         # Bring the Editor tab to the front when another view (Device Overview, Topology, Health)
         # selected a device. Consumed here (a per-frame global callback) rather than in the Editor
@@ -1538,6 +1616,7 @@ class KnxGuiApp:
         self._render_myknx_sign_modal()
         self._render_about_modal()
         self._render_update_modal()
+        self._render_import_notes_modal()
         self._keyring_plugin.render_window()
         self._signing_plugin.render_window()
         self._render_welcome()
@@ -2322,6 +2401,13 @@ def _main() -> None:
     runner_params.callbacks.post_init = app.setup
     runner_params.callbacks.before_exit = app.shutdown
     runner_params.callbacks.post_render_dockable_windows = app.render_overlays
+
+    # Dev watchdog for uncached per-frame DB reads (set XKNX_DEBUG_DB_FRAMES=1): once per frame it
+    # compares the render-thread query count against the project revision and logs a warning if
+    # queries keep firing while nothing changed — the signature of a panel render() that reads the DB
+    # without revision caching (see the revision-cached reads in ProjectService). No cost when off.
+    if frame_db_profiler.enabled:
+        runner_params.callbacks.pre_new_frame = app.watch_db_frame
 
     # Renderer backend: default is OpenGL3. In a VM (UTM/QEMU) or on Windows-on-ARM there is no
     # working OpenGL, but Windows always has a Direct3D software rasterizer (WARP). XKNX_RENDERER

@@ -20,11 +20,13 @@ from xml.etree import ElementTree as ET
 
 from sqlalchemy.orm import Session
 
+from xknxeditor.proj.core.events import SyncDeviceComObjects, UpdateDeviceApplication
+from xknxeditor.proj.core.identity import qualified_com_object_ref
 from xknxeditor.proj.core.knxproj_export import export_knxproj
 from xknxeditor.proj.core.knxproj_import import _build_com_object
 from xknxeditor.proj.core.service import ProjectService
 from xknxeditor.proj.db import make_engine, url_for
-from xknxeditor.proj.models import ComObject, Device
+from xknxeditor.proj.models import ComObject, ComObjectLink, Device
 
 _APP = "M-02DC_A-0000-10-DB14"
 
@@ -81,7 +83,7 @@ def _export_com_object_refs(tmp_path: Path, rows: list[tuple[str, str]]) -> list
     src = tmp_path / "p.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-MOD")
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 1, "Line 1")
     segment_id = next(
         line.segments[0].id
@@ -145,3 +147,182 @@ def test_export_falls_back_to_ref_id_without_an_instance_id(tmp_path: Path) -> N
     """Objects created in the editor (not imported) carry no instance id; behaviour is unchanged."""
     emitted = _export_com_object_refs(tmp_path, [(f"{_APP}_O-3_R-4", "")])
     assert emitted == ["O-3_R-4"]
+
+
+def _module_device(tmp_path: Path) -> tuple[Path, int, int]:
+    """A one-device project with a linkable group address; returns ``(src, device_id, ga_id)``."""
+    src = tmp_path / "p.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-MOD")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
+    line_id = svc.create_line(pid, area_id, 1, "Line 1")
+    segment_id = next(
+        line.segments[0].id
+        for area in svc.topology(pid, 0).areas
+        if area.id == area_id
+        for line in area.lines
+        if line.id == line_id
+    )
+    device_id = svc.add_device(
+        pid,
+        segment_id,
+        "M-02DC_H-1-3_P-ADE",
+        address=1,
+        name="Bridge",
+        hardware2program_ref_id="M-02DC_H-1-3_HP-0000-10-DB14",
+    )
+    ga_id = svc.create_group_address(pid, 0, 1, "GA")
+    svc.close(pid)
+    return src, device_id, ga_id
+
+
+def test_reconcile_keeps_module_instance_survivor(tmp_path: Path) -> None:
+    """Reconcile matches on the qualified per-instance ref, so a survivor keeps its row identity,
+    flag override and links instead of being deleted and recreated (the module-instance collapse).
+
+    Two instances share one stripped definition. The target (qualified namespace) keeps instance 2
+    and adds instance 3; instance 1 drops. Pre-fix, ``existing`` collapsed both onto the single
+    definition and matched nothing in ``target`` -> every module object was deleted and recreated.
+    """
+    src, device_id, ga_id = _module_device(tmp_path)
+    defn = f"{_APP}_MD-1_O-2-0_R-0"
+    keep, drop = "MD-1_M-1_MI-2_O-2-0_R-0", "MD-1_M-1_MI-1_O-2-0_R-0"
+    add = "MD-1_M-1_MI-3_O-2-0_R-0"
+
+    with Session(make_engine(url_for(src))) as s:
+        co_keep = ComObject(
+            device_id=device_id, ref_id=defn, instance_ref_id=keep, read_flag=True
+        )
+        co_drop = ComObject(device_id=device_id, ref_id=defn, instance_ref_id=drop)
+        s.add_all([co_keep, co_drop])
+        s.flush()
+        s.add(
+            ComObjectLink(
+                com_object_id=co_keep.id, group_address_id=ga_id, is_sending=True
+            )
+        )
+        s.commit()
+        keep_id = co_keep.id
+
+        target: list[list[str | None]] = [
+            [f"{_APP}_{keep}", None],
+            [f"{_APP}_{add}", None],
+        ]
+        event = SyncDeviceComObjects(
+            device_id=device_id, target=target, app_program_id=_APP
+        )
+        event.apply(s)
+        s.commit()
+
+        device = s.get(Device, device_id)
+        assert device is not None
+        by_qual = {
+            qualified_com_object_ref(c.ref_id, c.instance_ref_id, _APP): c
+            for c in device.com_objects
+        }
+        assert set(by_qual) == {f"{_APP}_{keep}", f"{_APP}_{add}"}
+        survivor = by_qual[f"{_APP}_{keep}"]
+        assert survivor.id == keep_id  # NOT deleted and recreated
+        assert survivor.read_flag is True  # flag override preserved
+        assert [link.group_address_id for link in survivor.links] == [ga_id]
+
+        # Undo restores the dropped instance WITH its per-instance identity (not the stripped
+        # definition), so it resolves again instead of collapsing to zero visible objects.
+        event.revert(s)
+        s.commit()
+        device = s.get(Device, device_id)
+        assert device is not None
+        by_qual = {
+            qualified_com_object_ref(c.ref_id, c.instance_ref_id, _APP): c
+            for c in device.com_objects
+        }
+        assert set(by_qual) == {f"{_APP}_{keep}", f"{_APP}_{drop}"}
+        assert by_qual[f"{_APP}_{drop}"].instance_ref_id == drop
+
+
+def test_app_upgrade_reprefixes_fully_prefixed_instance_ref(tmp_path: Path) -> None:
+    """ETS4 can store a fully app-prefixed instance_ref_id. An application upgrade must re-prefix it
+    together with ref_id, or the qualified lookup double-prefixes it (NEWAPP_OLDAPP_...)."""
+    src, device_id, _ = _module_device(tmp_path)
+    old_app = "M-02DC_A-0000-10-DB14"
+    new_app = "M-02DC_A-0000-11-ABCD"
+    old_ref = f"{old_app}_O-1_R-1"
+
+    with Session(make_engine(url_for(src))) as s:
+        co = ComObject(device_id=device_id, ref_id=old_ref, instance_ref_id=old_ref)
+        s.add(co)
+        s.commit()
+        co_id = co.id
+
+        event = UpdateDeviceApplication(
+            device_id=device_id,
+            new_product_ref_id="M-02DC_H-1-3_P-NEW",
+            new_hardware2program_ref_id="M-02DC_H-1-3_HP-0000-11-ABCD",
+            old_app_id=old_app,
+            new_app_id=new_app,
+            valid_ref_ids=[f"{new_app}_O-1_R-1"],
+        )
+        event.apply(s)
+        s.commit()
+        co = s.get(ComObject, co_id)
+        assert co is not None
+        assert co.ref_id == f"{new_app}_O-1_R-1"
+        assert co.instance_ref_id == f"{new_app}_O-1_R-1"  # re-prefixed, not doubled
+        # The qualified lookup now resolves to a single, correctly-prefixed ref.
+        assert (
+            qualified_com_object_ref(co.ref_id, co.instance_ref_id, new_app)
+            == f"{new_app}_O-1_R-1"
+        )
+
+        event.revert(s)
+        s.commit()
+        co = s.get(ComObject, co_id)
+        assert co is not None
+        assert co.ref_id == old_ref
+        assert co.instance_ref_id == old_ref  # instance identity restored on undo
+
+
+def test_reconcile_legacy_event_without_app_program_id_keeps_survivor(
+    tmp_path: Path,
+) -> None:
+    """A ``SyncDeviceComObjects`` serialized before ``app_program_id`` was threaded deserializes to
+    ``""``. The resolver must then fall back to the stored ``ref_id`` (the pre-resolver match), not
+    build a bare ``"_"``-prefixed key that matches nothing and deletes the surviving row's flags and
+    links. Uses an imported base object, whose stored ``ref_id`` already equals the qualified target.
+    """
+    src, device_id, ga_id = _module_device(tmp_path)
+    ref = f"{_APP}_O-1_R-1"
+
+    with Session(make_engine(url_for(src))) as s:
+        co_keep = ComObject(
+            device_id=device_id, ref_id=ref, instance_ref_id="O-1_R-1", read_flag=True
+        )
+        s.add(co_keep)
+        s.flush()
+        s.add(
+            ComObjectLink(
+                com_object_id=co_keep.id, group_address_id=ga_id, is_sending=True
+            )
+        )
+        s.commit()
+        keep_id = co_keep.id
+
+        # Legacy payload: no app_program_id -> from_dict yields "".
+        event = SyncDeviceComObjects.from_dict(
+            {
+                "device_id": device_id,
+                "target": [[ref, None], [f"{_APP}_O-2_R-2", None]],
+                "added_ids": [],
+                "removed": [],
+            }
+        )
+        assert event.app_program_id == ""
+        event.apply(s)
+        s.commit()
+
+        device = s.get(Device, device_id)
+        assert device is not None
+        survivor = next(c for c in device.com_objects if c.ref_id == ref)
+        assert survivor.id == keep_id  # kept, not deleted and recreated
+        assert survivor.read_flag is True  # flag override preserved
+        assert [link.group_address_id for link in survivor.links] == [ga_id]

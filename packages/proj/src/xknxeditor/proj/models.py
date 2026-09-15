@@ -55,6 +55,13 @@ class Project(Base):
     # The project id (P-XXXX) in the source .knxproj. The certificate/.validation are bound to it,
     # so an export of a protected project must reuse this id.
     original_project_id: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # The ProjectInformation free-text comment, carried over so a round-trip preserves it.
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Import-loss notes (JSON list, see core.import_notes): data the source .knxproj carried that our
+    # store cannot fully represent (merged installations, unassigned devices, per-instance com-object
+    # texts, IP config, multi-segment lines). Echoed at export so the user is reminded. Empty for a
+    # freshly created project or a lossless import.
+    import_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # ETS project-log entries (ProjectInformation/ProjectTraces), carried over verbatim so a
     # round-trip export preserves the project history. The ``comment`` is stored exactly as it
@@ -105,6 +112,15 @@ class Installation(Base):
     spaces: Mapped[list["Space"]] = relationship(
         back_populates="installation", cascade="all, delete-orphan"
     )
+    trades: Mapped[list["Trade"]] = relationship(
+        back_populates="installation", cascade="all, delete-orphan"
+    )
+    # Devices ETS keeps under ``<Topology>/<UnassignedDevices>`` (not yet placed on a line), captured
+    # verbatim from the raw ``.knxproj`` as namespace-stripped ``<DeviceInstance>`` XML strings (one
+    # per device, document order) and re-emitted on export. They have no line/segment, so they are
+    # not modelled as ``Device`` rows (which require a segment); kept here as opaque provenance the
+    # editor does not touch. ``None`` when the source had no such container.
+    unassigned_devices_xml: Mapped[list[str] | None] = mapped_column(JSON)
 
 
 class Area(Base):
@@ -118,6 +134,9 @@ class Area(Base):
     )
     address: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Descriptive metadata carried over from the imported .knxproj.
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     installation: Mapped["Installation"] = relationship(back_populates="areas")
     lines: Mapped[list["Line"]] = relationship(
@@ -141,6 +160,9 @@ class Line(Base):
     additional_group_addresses: Mapped[str] = mapped_column(
         Text, nullable=False, default=""
     )
+    # Descriptive metadata carried over from the imported .knxproj.
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     area: Mapped["Area"] = relationship(back_populates="lines")
     segments: Mapped[list["Segment"]] = relationship(
@@ -160,6 +182,8 @@ class Segment(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     medium_type: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # RF/PL ``DomainAddress`` (project/22+23 Segment attr, project/14+20 Line attr). None for TP/IP.
+    domain_address: Mapped[int | None] = mapped_column(Integer)
 
     line: Mapped["Line"] = relationship(back_populates="segments")
     devices: Mapped[list["Device"]] = relationship(
@@ -193,8 +217,17 @@ class Device(Base):
     # folder nodes, nesting and order, so it is preserved here as opaque provenance metadata (the
     # editor does not edit the tree). Empty when the source device had none.
     group_object_tree: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The DeviceInstance ``<IPConfig>`` (IP interface/router config: assign method, static IP/subnet/
+    # gateway/MAC), captured verbatim from the raw ``.knxproj`` as its attribute dict and re-emitted
+    # on export. xknxproject does not surface it, so it is preserved as opaque provenance (the editor
+    # does not edit it). ``None`` when the source device had no ``<IPConfig>``.
+    ip_config: Mapped[dict[str, str] | None] = mapped_column(JSON)
     # Descriptive metadata carried over from the imported .knxproj (for display without a catalog).
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The DeviceInstance ``LastModified`` timestamp, carried over verbatim (nullable, like
+    # ``last_download``). Emitted as-is on export.
+    last_modified: Mapped[str | None] = mapped_column(String)
     order_number: Mapped[str] = mapped_column(String, nullable=False, default="")
     hardware_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     product_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -233,6 +266,41 @@ class Device(Base):
     binary_data: Mapped[list["DeviceBinaryData"]] = relationship(
         back_populates="device", cascade="all, delete-orphan"
     )
+    additional_addresses: Mapped[list["DeviceAdditionalAddress"]] = relationship(
+        back_populates="device",
+        cascade="all, delete-orphan",
+        order_by="DeviceAdditionalAddress.id",
+    )
+    # Trade memberships pointing at this device. Read-only here (Trade owns the association via
+    # delete-orphan); the FK is ON DELETE CASCADE, so deleting a device drops these rows at the DB
+    # level. Exposed so the undo snapshot can capture them and restore the memberships on undo.
+    trade_links: Mapped[list["TradeDevice"]] = relationship(
+        back_populates="device",
+        viewonly=True,
+    )
+
+
+class DeviceAdditionalAddress(Base):
+    """An extra individual address a DeviceInstance reserves (``AdditionalAddresses/Address``).
+
+    Line/backbone couplers and IP interfaces claim additional individual addresses (e.g. the tunnel
+    addresses an IP interface hands out). ``xknxproject`` drops these on import, so they are captured
+    from the raw project XML and re-emitted verbatim on export. ``address`` is the 1-255 octet;
+    ``name``/``description``/``comment`` are the optional labels.
+    """
+
+    __tablename__ = "device_additional_addresses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[int] = mapped_column(
+        ForeignKey("devices.id"), nullable=False, index=True
+    )
+    address: Mapped[int | None] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    device: Mapped["Device"] = relationship(back_populates="additional_addresses")
 
 
 class ModuleInstance(Base):
@@ -337,6 +405,14 @@ class ComObject(Base):
     update_flag: Mapped[bool | None] = mapped_column(Boolean)
     read_on_init_flag: Mapped[bool | None] = mapped_column(Boolean)
 
+    # Per-instance text overrides (ETS ``@Text``/``@FunctionText``/``@Description`` on the
+    # ComObjectInstanceRef). Like the flags, ``None`` inherits the application/product default; a value
+    # pins the custom text the user set in ETS. Preserved through import/display/export so a renamed
+    # group object (and its free-text description) survives.
+    text_override: Mapped[str | None] = mapped_column(String)
+    function_text_override: Mapped[str | None] = mapped_column(String)
+    description_override: Mapped[str | None] = mapped_column(String)
+
     device: Mapped["Device"] = relationship(back_populates="com_objects")
     links: Mapped[list["ComObjectLink"]] = relationship(
         back_populates="com_object", cascade="all, delete-orphan"
@@ -358,6 +434,9 @@ class GroupRange(Base):
     range_start: Mapped[int] = mapped_column(Integer, nullable=False)
     range_end: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Descriptive metadata carried over from the imported .knxproj.
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Pass through line/backbone couplers unconditionally (``Unfiltered``). (KNX PR #651.)
     unfiltered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -389,8 +468,12 @@ class GroupAddress(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     data_secure: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Marked as a central/"main" group address (``Central``), carried over for round-trip.
+    central: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Pass through line/backbone couplers unconditionally (``Unfiltered``). (KNX PR #651.)
     unfiltered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Marked as a global/broadcast group address (``Global``), carried over for round-trip.
+    is_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     group_range: Mapped["GroupRange"] = relationship(back_populates="group_addresses")
     links: Mapped[list["ComObjectLink"]] = relationship(
@@ -436,8 +519,11 @@ class Space(Base):
     space_type: Mapped[str] = mapped_column(String, nullable=False, default="")
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     number: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # Raw ``@Usage`` id (e.g. ``tag:kitchen`` / ``SU-<int>``); ``usage_text`` is its translation.
+    usage: Mapped[str] = mapped_column(String, nullable=False, default="")
     usage_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     installation: Mapped["Installation"] = relationship(back_populates="spaces")
@@ -466,6 +552,9 @@ class Function(Base):
     function_type: Mapped[str] = mapped_column(String, nullable=False, default="")
     name: Mapped[str] = mapped_column(Text, nullable=False, default="")
     usage_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Descriptive metadata carried over from the imported .knxproj.
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
     order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     space: Mapped["Space"] = relationship(back_populates="functions")
@@ -492,6 +581,64 @@ class FunctionGroupAddress(Base):
     group_address: Mapped["GroupAddress"] = relationship(
         back_populates="function_links"
     )
+
+
+class Trade(Base):
+    """A trade (Gewerke): a named grouping of devices by discipline, in a recursive tree, imported
+    from the .knxproj Installation ``Trades``. ``order`` preserves the original sibling order.
+
+    ``xknxproject`` does not surface trades, so the tree is read verbatim from the raw project XML
+    and re-emitted on export (the referenced devices resolve through :class:`TradeDevice`)."""
+
+    __tablename__ = "trades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    installation_id: Mapped[int] = mapped_column(
+        ForeignKey("installations.id"), nullable=False, index=True
+    )
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    number: Mapped[str] = mapped_column(String, nullable=False, default="")
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Trade_t @CompletionStatus (default "Undefined") and @Context, preserved verbatim on round-trip.
+    completion_status: Mapped[str] = mapped_column(String, nullable=False, default="")
+    context: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    installation: Mapped["Installation"] = relationship(back_populates="trades")
+    parent: Mapped["Trade | None"] = relationship(
+        back_populates="children", remote_side="Trade.id"
+    )
+    children: Mapped[list["Trade"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+    devices: Mapped[list["TradeDevice"]] = relationship(
+        back_populates="trade",
+        cascade="all, delete-orphan",
+        order_by="TradeDevice.order",
+    )
+
+
+class TradeDevice(Base):
+    """A device referenced by a trade (``Trade/DeviceInstanceRef``), preserving its order.
+
+    The ``device_id`` FK is ``ON DELETE CASCADE`` so removing a device also drops its trade
+    memberships (the association carries no data of its own)."""
+
+    __tablename__ = "trade_devices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trade_id: Mapped[int] = mapped_column(
+        ForeignKey("trades.id"), nullable=False, index=True
+    )
+    device_id: Mapped[int] = mapped_column(
+        ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    trade: Mapped["Trade"] = relationship(back_populates="devices")
+    device: Mapped["Device"] = relationship(back_populates="trade_links")
 
 
 class Event(Base):

@@ -25,7 +25,7 @@ def _project(tmp_path: Path) -> tuple[ProjectService, str, Path]:
 
 def test_unfiltered_and_additional_are_collected(tmp_path: Path) -> None:
     svc, pid, src = _project(tmp_path)
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 2, "Line 2")
     plain = svc.create_group_address(pid, 0, 0x0801, "plain")
     flagged = svc.create_group_address(pid, 0, 0x0802, "flagged")
@@ -38,8 +38,8 @@ def test_unfiltered_and_additional_are_collected(tmp_path: Path) -> None:
 
     svc2 = ProjectService()
     pid2 = svc2.open(src)
-    # coupler 1.2.0 -> area 1, line 2
-    unfiltered, additional = svc2.coupler_pass_through(pid2, (1 << 12) | (2 << 8))
+    # coupler 2.2.0 -> area 2, line 2
+    unfiltered, additional = svc2.coupler_pass_through(pid2, (2 << 12) | (2 << 8))
     svc2.close(pid2)
 
     assert 0x0802 in unfiltered
@@ -73,7 +73,7 @@ def test_additional_addresses_are_scoped_to_the_couplers_own_line(
     tmp_path: Path,
 ) -> None:
     svc, pid, src = _project(tmp_path)
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 2")
     line_a = svc.create_line(pid, area_id, 1, "Line 1")
     line_b = svc.create_line(pid, area_id, 2, "Line 2")
     svc.close(pid)
@@ -85,8 +85,8 @@ def test_additional_addresses_are_scoped_to_the_couplers_own_line(
 
     svc2 = ProjectService()
     pid2 = svc2.open(src)
-    _u, additional_a = svc2.coupler_pass_through(pid2, (1 << 12) | (1 << 8))
-    _u2, additional_b = svc2.coupler_pass_through(pid2, (1 << 12) | (2 << 8))
+    _u, additional_a = svc2.coupler_pass_through(pid2, (2 << 12) | (1 << 8))
+    _u2, additional_b = svc2.coupler_pass_through(pid2, (2 << 12) | (2 << 8))
     svc2.close(pid2)
 
     assert additional_a == [111]

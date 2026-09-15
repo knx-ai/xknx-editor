@@ -79,7 +79,7 @@ def test_export_reemits_nested_channel_and_folder_nodes(tmp_path: Path) -> None:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-GOT")
-    area_id = svc.create_area(pid, 0, 1, "Area 1")
+    area_id = svc.create_area(pid, 0, 2, "Area 1")
     line_id = svc.create_line(pid, area_id, 1, "Line 1")
     segment_id = next(
         line.segments[0].id

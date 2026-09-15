@@ -449,3 +449,33 @@ msgstr "Gespeichert als {name}"
 
 msgid "Save project as"
 msgstr "Projekt speichern unter"
+
+msgid "Good to know"
+msgstr "Gut zu wissen"
+
+msgid "Your project opened fine and everything you need to work with is here. A few extra details from the original file are shown a bit more simply:"
+msgstr "Ihr Projekt ist geöffnet und alles, was Sie zum Arbeiten brauchen, ist da. Ein paar Zusatz-Angaben aus der Originaldatei werden etwas einfacher dargestellt:"
+
+msgid "This project came from a file with a few extra details this editor does not use. The export leaves these out:"
+msgstr "Dieses Projekt stammt aus einer Datei mit ein paar Zusatz-Angaben, die dieser Editor nicht nutzt. Beim Export bleiben diese weg:"
+
+msgid "The original file had {count} installations. They were combined into one."
+msgstr "Die Originaldatei hatte {count} Anlagen. Sie wurden zu einer zusammengefasst."
+
+msgid "{count} device(s) had no place in the original file, so they were left out."
+msgstr "{count} Gerät(e) hatten in der Originaldatei keinen Platz und wurden weggelassen."
+
+msgid "{count} com-object(s) had an extra description in the original file. The custom name and function are kept; only that description is not shown here."
+msgstr "{count} Kommunikationsobjekt(e) hatten in der Originaldatei eine zusätzliche Beschreibung. Der eigene Name und die Funktion bleiben erhalten; nur diese Beschreibung wird hier nicht angezeigt."
+
+msgid "{count} IP or function setting(s) from the original file are not used here."
+msgstr "{count} IP- oder Funktions-Einstellung(en) aus der Originaldatei werden hier nicht genutzt."
+
+msgid "{count} line(s) use several segments. In a schema 14/20 export they are shown at line level only."
+msgstr "{count} Linie(n) nutzen mehrere Segmente. In einem Export mit Schema 14/20 werden sie nur auf Linien-Ebene gezeigt."
+
+msgid "{count} line(s) had the same address in different installations. One of each was kept when combining."
+msgstr "{count} Linie(n) hatten in verschiedenen Anlagen dieselbe Adresse. Beim Zusammenfassen wurde je eine behalten."
+
+msgid "For example: {examples}"
+msgstr "Zum Beispiel: {examples}"

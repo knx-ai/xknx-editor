@@ -3,9 +3,12 @@
 from xknxeditor.proj.core.event_store import EventStore
 from xknxeditor.proj.core.key_extract import (
     DLL_NAME,
+    TRACE_DLL_NAME,
     KeyExtractionError,
     default_dll_path,
+    default_trace_dll_path,
     extract_converter_key,
+    extract_trace_key,
     extraction_backend,
 )
 from xknxeditor.proj.core.knxproj_export import (
@@ -28,26 +31,45 @@ from xknxeditor.proj.core.myknx_cert import (
     sign_exported_knxproj,
 )
 from xknxeditor.proj.core.service import ProjectService
+from xknxeditor.proj.core.trace_crypto import (
+    current_marker,
+    decrypt_comment,
+    encrypt_comment,
+    is_encrypted,
+    reset_trace_key,
+    set_trace_key,
+    trace_key_available,
+)
 
 __all__ = [
     "DLL_NAME",
+    "TRACE_DLL_NAME",
     "EventStore",
     "ExportResult",
     "KeyExtractionError",
     "MyKnxError",
     "ProjectService",
+    "current_marker",
     "current_signing_key",
+    "decrypt_comment",
     "default_dll_path",
+    "default_trace_dll_path",
+    "encrypt_comment",
     "export_knxproj",
     "extract_converter_key",
+    "extract_trace_key",
     "extraction_backend",
     "fetch_master_xml",
     "fetch_myknx_products",
     "import_knxproj",
+    "is_encrypted",
     "myknx_certificate_signer",
     "read_master_xml",
     "reset_signing_key",
+    "reset_trace_key",
     "set_signing_key",
+    "set_trace_key",
     "sign_exported_knxproj",
     "signing_key_is_placeholder",
+    "trace_key_available",
 ]

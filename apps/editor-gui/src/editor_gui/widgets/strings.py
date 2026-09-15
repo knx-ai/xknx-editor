@@ -39,7 +39,10 @@ class WidgetStrings(BaseStrings):
 
     @property
     def GROUP_OBJECTS_BATCH_HINT(self) -> str:
-        return _("Name template placeholders: {object}, {device}, {n}")
+        return _(
+            "Name template placeholders: {object}, {device}, {room}, {function}, "
+            "{number}, {dpt}, {n} (index; {n:02} zero-pads)"
+        )
 
     @property
     def GROUP_OBJECTS_BATCH_NAME(self) -> str:

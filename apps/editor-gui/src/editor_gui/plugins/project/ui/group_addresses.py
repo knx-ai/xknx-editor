@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from xknxeditor.proj.core.service import GroupRangeInfo
 
 
+# Accent colour for the sending marker, matching the Group Objects table.
+_SENDING_COLOR = imgui.ImVec4(0.45, 0.8, 0.5, 1.0)
+
+
 class GroupAddressesPanel:
     def __init__(
         self,
@@ -36,6 +40,7 @@ class GroupAddressesPanel:
         on_rename_range: Callable[[int, str], None] | None = None,
         on_remove_range: Callable[[int], None] | None = None,
         group_style: "Callable[[], GroupAddressStyle] | None" = None,
+        on_select_device_id: Callable[[int], None] | None = None,
     ) -> None:
         self._get_range_tree = get_range_tree
         self._get_assignments_for_ga = get_assignments_for_ga
@@ -48,6 +53,7 @@ class GroupAddressesPanel:
         self._on_rename_range = on_rename_range
         self._on_remove_range = on_remove_range
         self._group_style = group_style
+        self._on_select_device_id = on_select_device_id
         # External "select this GA" requests (e.g. clicking a Health finding).
         self._take_requested_ga = take_requested_ga
         self._filter_text: str = ""
@@ -403,27 +409,65 @@ class GroupAddressesPanel:
         flags = imgui.TableFlags_.borders_inner | imgui.TableFlags_.sizing_stretch_prop
         if not imgui.begin_table("##ga_assignments", 3, flags):
             return
-        imgui.table_setup_column("Device", imgui.TableColumnFlags_.width_stretch, 0.5)
-        imgui.table_setup_column("Object", imgui.TableColumnFlags_.width_stretch, 0.4)
-        imgui.table_setup_column("S", imgui.TableColumnFlags_.width_fixed, 20.0)
-        imgui.table_headers_row()
+        imgui.table_setup_column(
+            S.GA_COL_DEVICE, imgui.TableColumnFlags_.width_stretch, 0.5
+        )
+        imgui.table_setup_column(
+            S.GA_COL_OBJECT, imgui.TableColumnFlags_.width_stretch, 0.4
+        )
+        imgui.table_setup_column(
+            S.GA_COL_SENDING, imgui.TableColumnFlags_.width_fixed, 20.0
+        )
+        # Manual header row so the terse "S" column can carry an explanatory tooltip.
+        imgui.table_next_row(imgui.TableRowFlags_.headers)
+        for col in range(3):
+            imgui.table_set_column_index(col)
+            imgui.table_header(imgui.table_get_column_name(col))
+            if col == 2 and imgui.is_item_hovered():
+                imgui.set_tooltip(S.GA_COL_SENDING_TOOLTIP)
         for a in assignments:
-            device_name, co_name = names.get(a.com_object_id, ("?", "?"))
+            entry = names.get(a.com_object_id)
+            if entry is None:
+                device_label, co_name, node_id = "?", "?", None
+            else:
+                device_label, co_name, node_id = entry
             imgui.table_next_row()
             imgui.table_set_column_index(0)
-            text_clipped_tooltip(device_name)
+            # Clicking a row opens the owning device in the editor (Configure panel).
+            if node_id is not None and self._on_select_device_id is not None:
+                if imgui.selectable(
+                    f"{device_label}##ga_asg{a.com_object_id}",
+                    False,
+                    imgui.SelectableFlags_.span_all_columns,
+                )[0]:
+                    self._on_select_device_id(node_id)
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip(S.GA_OBJECT_OPEN_TOOLTIP)
+            else:
+                text_clipped_tooltip(device_label)
             imgui.table_set_column_index(1)
             text_clipped_tooltip(co_name, disabled=True)
             imgui.table_set_column_index(2)
             if a.is_sending:
-                imgui.text("→")
+                # Font-safe accent marker (DroidSans has no U+2192 arrow glyph).
+                imgui.text_colored(_SENDING_COLOR, "»")
+                if imgui.is_item_hovered():
+                    imgui.set_tooltip(S.GA_COL_SENDING_TOOLTIP)
         imgui.end_table()
 
-    def _com_object_names(self) -> dict[int, tuple[str, str]]:
-        names: dict[int, tuple[str, str]] = {}
+    def _com_object_names(self) -> dict[int, tuple[str, str, int]]:
+        names: dict[int, tuple[str, str, int]] = {}
         for device in self._get_devices():
-            label = device.name or device.individual_address or "?"
+            # Imported devices are often unnamed; fall back to the application name (as
+            # the Devices tree does), and prefix the individual address for context.
+            primary = device.name or getattr(device.app, "name", "") or "?"
+            ia = device.individual_address
+            label = f"{ia}  {primary}" if ia else primary
             for co in device.com_objects:
                 if co.db_id is not None:
-                    names[co.db_id] = (label, com_object_display_name(co))
+                    names[co.db_id] = (
+                        label,
+                        com_object_display_name(co),
+                        device.node_id,
+                    )
         return names

@@ -29,7 +29,8 @@ class CatalogPanel:
     def __init__(
         self,
         get_products: Callable[[], list[ProductSummary]],
-        on_select: Callable[[ProductSummary], None],
+        on_select: Callable[[ProductSummary, int | None], None],
+        get_spaces: Callable[[], list[tuple[int, str]]] | None = None,
         get_online_manufacturers: Callable[[], list[OnlineManufacturer] | None]
         | None = None,
         on_online_refresh: Callable[[], None] | None = None,
@@ -52,6 +53,12 @@ class CatalogPanel:
     ) -> None:
         self._get_products = get_products
         self._on_select = on_select
+        # Optional room picker for "Add device": lists (space_id, path) so a device can be placed
+        # into a space on creation instead of always landing in "Without space". ``_add_space_id``
+        # is the panel-level chosen target (None = no room), applied by both the button and the
+        # double-click quick-add.
+        self._get_spaces = get_spaces
+        self._add_space_id: int | None = None
         self._search: str = ""
         # Online catalog (manufacturer list from the KNX service).
         self._get_online_manufacturers = get_online_manufacturers
@@ -194,7 +201,9 @@ class CatalogPanel:
         if imgui.is_item_clicked():
             self._selected_product = product  # single click selects (shows detail)
             if imgui.is_mouse_double_clicked(0):
-                self._on_select(product)  # double click adds to the project
+                self._on_select(
+                    product, self._add_space_id
+                )  # double click adds to the project
 
     def _render_product_detail(self) -> None:
         product = self._selected_product
@@ -221,8 +230,34 @@ class CatalogPanel:
             imgui.text_disabled(label)
             imgui.same_line(150.0)
             imgui.text_wrapped(value)
+        self._render_space_picker()
         if imgui.button(S.CATALOG_DETAIL_ADD):
-            self._on_select(product)
+            self._on_select(product, self._add_space_id)
+
+    def _render_space_picker(self) -> None:
+        """Room combo above the Add button: pick a space to place the new device in (or none).
+        Hidden when no space getter is wired or the project has no spaces yet."""
+        if self._get_spaces is None:
+            return
+        spaces = self._get_spaces()
+        if not spaces:
+            self._add_space_id = None
+            return
+        options = [(None, S.CATALOG_ADD_SPACE_NONE), *spaces]
+        # Drop a stale selection (e.g. the chosen space was deleted) so Add never targets a gone id.
+        if self._add_space_id is not None and all(
+            sid != self._add_space_id for sid, _ in spaces
+        ):
+            self._add_space_id = None
+        current = next(
+            (i for i, (sid, _) in enumerate(options) if sid == self._add_space_id), 0
+        )
+        imgui.set_next_item_width(240.0)
+        changed, picked = imgui.combo(
+            S.CATALOG_ADD_SPACE_LABEL, current, [label for _, label in options]
+        )
+        if changed:
+            self._add_space_id = options[picked][0]
 
     def _render_online_catalog(self) -> None:
         """Online manufacturer list from the KNX catalog service (button + tree).

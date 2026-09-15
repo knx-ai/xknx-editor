@@ -393,3 +393,92 @@ def test_import_real_file(tmp_path: Path) -> None:
     svc.open(dest)
     assert svc.devices(pid)
     assert svc.group_addresses(pid)
+
+
+def test_read_com_object_text_overrides() -> None:
+    from xml.etree import ElementTree as ET
+
+    device = ET.fromstring(
+        """
+        <DeviceInstance Id="DI-1">
+          <ComObjectInstanceRefs>
+            <ComObjectInstanceRef Id="C-1" RefId="O-1_R-1" Text="Kitchen" FunctionText="Switch" />
+            <ComObjectInstanceRef Id="C-2" RefId="O-2_R-1" FunctionText="Status" />
+            <ComObjectInstanceRef Id="C-3" RefId="O-3_R-1" />
+            <ComObjectInstanceRef Id="C-4" RefId="O-4_R-1" Description="free-text note" />
+          </ComObjectInstanceRefs>
+        </DeviceInstance>
+        """
+    )
+    overrides = dict(knxproj_import._read_com_object_text_overrides(device))
+    assert overrides == {
+        "C-1": ("Kitchen", "Switch", None),
+        "C-2": (None, "Status", None),
+        "C-4": (None, None, "free-text note"),
+    }  # C-3 has no override attributes and is skipped
+
+
+def test_build_com_object_applies_text_override() -> None:
+    coir = _coir(com_object_ref_id="M-1_A-1_O-1_R-1", ref_id="O-1_R-1")
+    row = knxproj_import._build_com_object(coir, ("Kitchen", "Switch", "note"))
+    assert (
+        row.text_override,
+        row.function_text_override,
+        row.description_override,
+    ) == (
+        "Kitchen",
+        "Switch",
+        "note",
+    )
+    bare = knxproj_import._build_com_object(coir)
+    assert (
+        bare.text_override,
+        bare.function_text_override,
+        bare.description_override,
+    ) == (None, None, None)
+
+
+def test_read_ip_config() -> None:
+    from xml.etree import ElementTree as ET
+
+    device = ET.fromstring(
+        """
+        <DeviceInstance Id="DI-1">
+          <IPConfig Assign="Fixed" IPAddress="192.168.1.10" SubnetMask="255.255.255.0" />
+        </DeviceInstance>
+        """
+    )
+    assert knxproj_import._read_ip_config(device) == {
+        "Assign": "Fixed",
+        "IPAddress": "192.168.1.10",
+        "SubnetMask": "255.255.255.0",
+    }
+    # No <IPConfig> -> None (distinct from an empty element).
+    bare = ET.fromstring('<DeviceInstance Id="DI-2" />')
+    assert knxproj_import._read_ip_config(bare) is None
+
+
+def test_read_unassigned_devices() -> None:
+    from xml.etree import ElementTree as ET
+
+    root = ET.fromstring(
+        """
+        <Project xmlns="http://knx.org/xml/project/23">
+          <Topology>
+            <Area Address="1" />
+            <UnassignedDevices>
+              <DeviceInstance Id="D-99" Address="7" />
+              <DeviceInstance Id="D-100" Address="8" />
+            </UnassignedDevices>
+          </Topology>
+        </Project>
+        """
+    )
+    entries = knxproj_import._read_unassigned_devices(root)
+    assert len(entries) == 2
+    # Captured namespace-stripped (local names only), so re-parsing yields the bare tag and @Id.
+    first = ET.fromstring(entries[0])
+    assert first.tag == "DeviceInstance"
+    assert first.get("Id") == "D-99"
+    # No <UnassignedDevices> -> empty list.
+    assert knxproj_import._read_unassigned_devices(ET.fromstring("<Project />")) == []

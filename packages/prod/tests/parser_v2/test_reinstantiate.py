@@ -94,7 +94,9 @@ class _Ctx:
         return self._values.get(ref_id, "")
 
     def qualify(self, ref_id: str) -> str:
-        return ref_id  # global scope: identity (Choose/Repeat push the qualified gate id)
+        return (
+            ref_id  # global scope: identity (Choose/Repeat push the qualified gate id)
+        )
 
     def qualify_local(self, ref_id: str) -> str:
         return ref_id  # global scope: identity
@@ -211,12 +213,8 @@ def test_com_object_number_strips_only_terminal_ref() -> None:
     # top-level object: R- stripped -> O-<n>
     assert _com_object_number("M-1_A-1_O-119_R-224") == "M-1_A-1_O-119"
     # module-instanced object: MODULE PATH PRESERVED (not collapsed to O-2-23)
-    assert (
-        _com_object_number("MD-1_M-3_MI-1_O-2-23_R-1") == "MD-1_M-3_MI-1_O-2-23"
-    )
-    assert (
-        _com_object_number("MD-1_M-3_MI-2_O-2-23_R-1") == "MD-1_M-3_MI-2_O-2-23"
-    )
+    assert _com_object_number("MD-1_M-3_MI-1_O-2-23_R-1") == "MD-1_M-3_MI-1_O-2-23"
+    assert _com_object_number("MD-1_M-3_MI-2_O-2-23_R-1") == "MD-1_M-3_MI-2_O-2-23"
     # two module instances of the same base object must NOT canonicalize equal
     assert _com_object_number("MD-1_M-3_MI-1_O-2-23_R-1") != _com_object_number(
         "MD-1_M-3_MI-2_O-2-23_R-1"

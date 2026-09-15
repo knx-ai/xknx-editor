@@ -118,6 +118,12 @@ async def test_full_edit_flow(tmp_path: Path) -> None:
         device = await _data(client, "project_add_device", product_ref_id=product_ref)
         node_id = device["node_id"]
         assert isinstance(node_id, int)
+        # Device dicts carry the (editable) description, in both the list and the single view.
+        listed = await _data(client, "project_list_devices")
+        assert all("description" in d for d in listed["items"])
+        assert "description" in (
+            await _data(client, "project_get_device", node_id=node_id)
+        )
         com_objects = (
             await _data(client, "project_list_com_objects", node_id=node_id)
         )["items"]

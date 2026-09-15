@@ -57,6 +57,7 @@ class ConfigurePanel:
         on_param_change: Callable[[Device, str, str], None],
         on_individual_address_change: Callable[[Device, str], None],
         on_name_change: Callable[[Device, str], None],
+        on_description_change: Callable[[Device, str], None],
         set_flag: Callable[[Device, str, str, bool], None],
         get_links_for_com_object: GroupLinkResolver,
         get_all_group_addresses: GroupAddressCatalog,
@@ -106,6 +107,7 @@ class ConfigurePanel:
         self._multi_targets: list[int] = []
         self._on_individual_address_change = on_individual_address_change
         self._on_name_change = on_name_change
+        self._on_description_change = on_description_change
         self._on_program_device = on_program_device
         self._on_eval_device = on_eval_device
         self._open_memory_preview = open_memory_preview
@@ -138,6 +140,7 @@ class ConfigurePanel:
         )
         self._name_buffer: str = ""
         self._address_buffer: str = ""
+        self._description_buffer: str = ""
         self._buffer_device_id: int | None = None
         self._download_scope: DownloadScope = DownloadScope.PARAMETERS
         self._confirm_program_open: bool = False
@@ -181,6 +184,7 @@ class ConfigurePanel:
         if self._buffer_device_id != device.node_id:
             self._name_buffer = device.name
             self._address_buffer = device.individual_address
+            self._description_buffer = device.description
             self._buffer_device_id = device.node_id
 
         imgui.align_text_to_frame_padding()
@@ -268,9 +272,7 @@ class ConfigurePanel:
             self._render_label_value(
                 S.CONFIGURE_PRODUCT, info.product_name if info else ""
             )
-            self._render_label_value(
-                S.CONFIGURE_DESCRIPTION, info.description if info else ""
-            )
+            self._render_description_field(device)
             self._render_label_value(
                 S.CONFIGURE_PRODUCT_REF, info.product_ref_id if info else ""
             )
@@ -281,6 +283,8 @@ class ConfigurePanel:
             self._render_manual_button(info)
             self._render_online_versions(device, info)
             self._render_device_readout(device)
+
+        self._render_ip_config(device)
 
         # Success alert after an application update (top level so it shows regardless of the
         # Manufacturer header state). Opened via a flag set in the update confirm.
@@ -713,6 +717,42 @@ class ConfigurePanel:
                         imgui.text_disabled(step.details)
                     imgui.end_table()
                 imgui.tree_pop()
+
+    def _render_description_field(self, device: Device) -> None:
+        """Editable device description (ETS "Description"/comment). Follows the same commit-on-blur
+        pattern as the Name field: push through the callback when editing ends, and keep the buffer
+        in sync with the live device while the field is not focused."""
+        imgui.align_text_to_frame_padding()
+        imgui.text_disabled(S.CONFIGURE_DESCRIPTION)
+        imgui.same_line(120.0)
+        imgui.set_next_item_width(-1)
+        _, self._description_buffer = imgui.input_text(
+            "##description", self._description_buffer
+        )
+        if imgui.is_item_deactivated_after_edit():
+            self._on_description_change(device, self._description_buffer)
+        if (
+            not imgui.is_item_active()
+            and self._description_buffer != device.description
+        ):
+            self._description_buffer = device.description
+
+    def _render_ip_config(self, device: Device) -> None:
+        """Read-only IP configuration of an IP router/interface, carried verbatim from import. Only
+        shown when the device has static values (IP/subnet/gateway/MAC); a plain ``Assign="Auto"``
+        with no addresses carries nothing worth showing, so the header stays hidden then."""
+        info = self._get_device_info(device.node_id)
+        cfg = info.ip_config if info else None
+        # Nothing, or only the Assign method with no static address -> not worth a section.
+        if not cfg or not (cfg.keys() - {"Assign"}):
+            return
+        if not imgui.collapsing_header(S.CONFIGURE_IP_CONFIG):
+            return
+        self._render_label_value(S.CONFIGURE_IP_ASSIGN, cfg.get("Assign", ""))
+        self._render_label_value(S.CONFIGURE_IP_ADDRESS, cfg.get("IPAddress", ""))
+        self._render_label_value(S.CONFIGURE_IP_SUBNET, cfg.get("SubnetMask", ""))
+        self._render_label_value(S.CONFIGURE_IP_GATEWAY, cfg.get("DefaultGateway", ""))
+        self._render_label_value(S.CONFIGURE_IP_MAC, cfg.get("MACAddress", ""))
 
     def _render_label_value(self, label: str, value: str) -> None:
         imgui.text_disabled(label)

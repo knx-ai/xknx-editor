@@ -73,6 +73,12 @@ msgstr "Produktreferenz"
 msgid "Add device"
 msgstr "Gerät hinzufügen"
 
+msgid "Room"
+msgstr "Raum"
+
+msgid "(no room)"
+msgstr "(kein Raum)"
+
 msgid "Fetch {count} missing application(s) online"
 msgstr "{count} fehlende Applikation(en) online abrufen"
 

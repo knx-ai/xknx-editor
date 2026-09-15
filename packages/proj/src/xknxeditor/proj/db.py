@@ -15,6 +15,7 @@ type change, data backfill) needs an explicit numbered step keyed off ``PRAGMA u
 import contextlib
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -169,6 +170,61 @@ def _migrate(engine: Engine) -> None:
         conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
 
 
+class _FrameDbProfiler:
+    """Dev-only watchdog for uncached per-frame DB reads.
+
+    In the immediate-mode GUI a panel's ``render()`` runs ~60x/s; a DB read there that is not cached
+    by revision becomes a 60 Hz SQLite query + ORM rebuild that pins the CPU and keeps the app off
+    idling. This profiler counts queries issued on the *render thread* and, when the project has not
+    changed across several consecutive frames yet queries keep firing, returns a one-off warning that
+    names the offending statements. Off unless ``XKNX_DEBUG_DB_FRAMES=1``; adds no cost otherwise.
+    """
+
+    # Consecutive no-change frames with queries before we warn: a legitimate lazy cache miss touches
+    # the DB for a single frame, an uncached per-frame read touches it every frame (streak grows).
+    _THRESHOLD = 3
+
+    def __init__(self) -> None:
+        self.enabled = os.environ.get("XKNX_DEBUG_DB_FRAMES") == "1"
+        self._render_thread: int | None = None
+        self._count = 0
+        self._stmts: set[str] = set()
+        self._last_revision: int | None = None
+        self._streak = 0
+
+    def note(self, statement: str) -> None:
+        """Record a query. Ignores queries off the render thread (background import/IO), so only
+        per-frame reads that actually stall the UI are counted."""
+        if self._render_thread is None or threading.get_ident() != self._render_thread:
+            return
+        self._count += 1
+        if len(self._stmts) < 8:
+            self._stmts.add(statement.split("\n", 1)[0][:80])
+
+    def end_frame(self, revision: int) -> str | None:
+        """Close the current frame (call once per rendered frame from the render thread). Returns a
+        warning string the first time a query-without-change streak crosses the threshold, else None."""
+        self._render_thread = threading.get_ident()
+        msg: str | None = None
+        if self._count > 0 and revision == self._last_revision:
+            self._streak += 1
+            if self._streak == self._THRESHOLD:
+                stmts = "; ".join(sorted(self._stmts))
+                msg = (
+                    f"{self._count} DB query/queries per frame with no project change over "
+                    f"{self._THRESHOLD} frames (uncached read in a panel render?): {stmts}"
+                )
+        else:
+            self._streak = 0
+        self._last_revision = revision
+        self._count = 0
+        self._stmts.clear()
+        return msg
+
+
+frame_db_profiler = _FrameDbProfiler()
+
+
 def make_engine(url: str) -> Engine:
     """Build a configured SQLAlchemy engine (SQLite pragmas + schema auto-create/migrate).
 
@@ -182,6 +238,19 @@ def make_engine(url: str) -> Engine:
         cursor.execute("PRAGMA journal_mode=DELETE")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+    if frame_db_profiler.enabled:
+
+        @event.listens_for(engine, "after_cursor_execute")
+        def _count_query(  # pyright: ignore[reportUnusedFunction]
+            _conn: Any,
+            _cursor: Any,
+            statement: str,
+            _params: Any,
+            _context: Any,
+            _executemany: bool,
+        ) -> None:
+            frame_db_profiler.note(statement)
 
     # create_all/_migrate are the first DB writes; on a network share (SMB/NFS) or a read-only dir
     # SQLite fails here with "unable to open database file". Translate that into a clear, typed

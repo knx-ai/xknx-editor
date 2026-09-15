@@ -109,6 +109,7 @@ class ProjectPlugin:
             get_selected_node_id=self._selected_node_id,
             on_select_devices=self._on_select_devices,
             get_selected_node_ids=lambda: api.project.selected_node_ids,
+            on_delete_device=self._on_delete_device,
         )
 
         self._configure_panel = ConfigurePanel(
@@ -120,6 +121,7 @@ class ProjectPlugin:
             on_param_change_selected=self._handle_param_change_selected,
             on_individual_address_change=self._handle_individual_address_change,
             on_name_change=self._handle_name_change,
+            on_description_change=self._handle_description_change,
             set_flag=self._handle_flag_change,
             get_links_for_com_object=self._links_for_com_object,
             get_all_group_addresses=self._all_group_addresses,
@@ -160,6 +162,7 @@ class ProjectPlugin:
             on_rename_range=api.project.rename_group_range,
             on_remove_range=api.project.remove_group_range,
             group_style=lambda: api.project.group_address_style,
+            on_select_device_id=self._select_device_by_id,
         )
 
         self._spaces_panel = SpacesPanel(
@@ -296,6 +299,15 @@ class ProjectPlugin:
     def _on_clone_device(self, device: "Device") -> None:
         self._api.project.clone_device(device.node_id)
 
+    def _on_delete_device(self, device: "Device") -> None:
+        node_id = device.node_id
+        was_selected = self._selected_node_id() == node_id or (
+            node_id in self._api.project.selected_node_ids
+        )
+        self._api.project.remove_device(node_id)
+        if was_selected:
+            self._api.project.set_multi_selection(None, [])
+
     def _on_create_area(self, area_number: int, name: str) -> None:
         self._api.project.create_area(area_number, name)
 
@@ -405,12 +417,15 @@ class ProjectPlugin:
         self, device: "Device", com_object: Any
     ) -> tuple[str, str]:
         """Recommendation for a new group address for ``com_object``: the next free address and a
-        name combining the device's room, the object/channel name and its function, e.g.
-        "Flur TW 1 Switch" (each part included only when present and not already covered)."""
+        name combining the device's room, a device identifier, the object/channel name and its
+        function, e.g. "Flur - Taster - TW 1 - Switch" (each part included only when present and
+        not already covered). The device identifier keeps names unique when several devices with
+        the same objects share a room: it prefers the device description, then its short name."""
         address = self._api.project.next_free_group_address() or ""
         parts: list[str] = []
         for token in (
             self._device_room(device),
+            self._device_ga_token(device),
             com_object.name or "",
             getattr(com_object, "function_text", "") or "",
         ):
@@ -418,6 +433,20 @@ class ProjectPlugin:
             if token and token not in parts:
                 parts.append(token)
         return address, " - ".join(parts)
+
+    def _device_ga_token(self, device: "Device") -> str:
+        """Identifier of ``device`` for a group-address name: its description if set, otherwise the
+        short name (custom/app name, falling back to product or hardware name)."""
+        info = self._api.project.get_device_info(device.node_id)
+        candidates = (
+            (info.description, info.name, info.product_name, info.hardware_name)
+            if info is not None
+            else (device.name,)
+        )
+        for candidate in candidates:
+            if candidate and candidate.strip():
+                return candidate.strip()
+        return ""
 
     def _next_free_sub(self, main: int, middle: int) -> int:
         """First free sub-group (0..255) within a 3-level main/middle block, so entering "2/1"
@@ -577,11 +606,13 @@ class ProjectPlugin:
     ) -> None:
         """Create a group address for each selected com-object and link it as the sending address —
         the bulk 'create group addresses' flow. ``name_template`` supports ``{object}``,
-        ``{device}``, ``{n}``; ``start_address`` (optional) seeds sequential addressing, else each
-        gets the next free address."""
+        ``{device}``, ``{room}``, ``{function}``, ``{number}``, ``{dpt}`` and ``{n}`` (batch index,
+        1-based; ``{n:02}`` zero-pads); ``start_address`` (optional) seeds sequential addressing,
+        else each gets the next free address."""
         from xknxeditor.proj.core.addressing import format_ga, parse_ga
 
         style = self._api.project.group_address_style
+        room = self._device_room(device)
         base: int | None = None
         if start_address:
             try:
@@ -598,9 +629,15 @@ class ProjectPlugin:
                 continue
             try:
                 name = (name_template or "{object}").format(
-                    object=co.name, device=device.name, n=i + 1
+                    object=co.name,
+                    device=device.name,
+                    room=room,
+                    function=getattr(co, "function_text", "") or "",
+                    number=co.number,
+                    dpt=getattr(co.dpt, "name", "") or "",
+                    n=i + 1,
                 )
-            except (KeyError, IndexError):
+            except (KeyError, IndexError, ValueError):
                 name = co.name or f"{device.name} {co.number}"
             address = format_ga(base + i, style) if base is not None else None
             ga_id = self._api.project.create_group_address(address, name)
@@ -913,6 +950,16 @@ class ProjectPlugin:
         if old_name != new_name:
             device.name = new_name
             self._api.project.set_device_name(device.node_id, old_name, new_name)
+
+    def _handle_description_change(
+        self, device: "Device", new_description: str
+    ) -> None:
+        old_description = device.description
+        if old_description != new_description:
+            device.description = new_description
+            self._api.project.set_device_description(
+                device.node_id, old_description, new_description
+            )
 
     def _handle_flag_change(
         self, device: "Device", co_id: str, flag_name: str, new_value: bool

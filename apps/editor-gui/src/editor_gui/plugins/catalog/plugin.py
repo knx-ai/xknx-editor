@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from editor_gui.plugins.base import Logger, PanelDefinition, PluginAPI
 from editor_gui.plugins.catalog.online_catalog import (
@@ -25,6 +25,7 @@ class CatalogPlugin:
         self._panel = CatalogPanel(
             get_products=api.catalog.get_products,
             on_select=self._on_select,
+            get_spaces=self._space_options,
             get_online_manufacturers=api.catalog.online_manufacturers,
             on_online_refresh=self._refresh_online,
             fetch_online_items=self._fetch_online_items,
@@ -51,7 +52,7 @@ class CatalogPlugin:
         if self._api.notify is not None:
             self._api.notify(text)
 
-    def _on_select(self, product: ProductSummary) -> None:
+    def _on_select(self, product: ProductSummary, space_id: int | None = None) -> None:
         # "Add device" needs a project to add into; without one add_device is a silent no-op, so give
         # explicit feedback instead of the button appearing to do nothing.
         if not self._api.project.is_open:
@@ -81,8 +82,26 @@ class CatalogPlugin:
             app=app,
         )
         if device_id:
+            if space_id is not None:
+                self._api.project.set_device_space(device_id, space_id)
             self._log.info("device added", name=app.name, id=device_id)
             self._notify(S.CATALOG_ADD_OK.format(name=app.name))
+
+    def _space_options(self) -> list[tuple[int, str]]:
+        """Flattened (space_id, "Building / Floor / Room") pairs for the Add-device room picker,
+        in tree order. Empty when no project is open or the project has no spaces."""
+        if not self._api.project.is_open:
+            return []
+        out: list[tuple[int, str]] = []
+
+        def walk(spaces: list[Any], trail: list[str]) -> None:
+            for space in spaces:
+                here = [*trail, space.name or space.space_type or "?"]
+                out.append((space.id, " / ".join(here)))
+                walk(space.children, here)
+
+        walk(self._api.project.get_space_tree(), [])
+        return out
 
     def _refresh_online(self) -> None:
         """Fetch the online manufacturer list (called on a worker thread)."""

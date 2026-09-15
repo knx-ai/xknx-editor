@@ -67,6 +67,13 @@ class ComObject:
     object_size: str = ""  # resolved ComObjectSize, e.g. "1 Bit" / "1 Byte"
     priority: str = ""  # resolved ComObjectPriority, e.g. "Low"
     db_id: int | None = None
+    # Per-instance text overrides (ETS ``@Text``/``@FunctionText``/``@Description``). ``None`` inherits
+    # the application default; ``@Text``/``@FunctionText`` are preferred over the app default for
+    # ``name``/``function_text``, ``@Description`` is a free-text note shown as a tooltip. Populated
+    # from the stored ComObject row (see project/service.py).
+    text_override: str | None = None
+    function_text_override: str | None = None
+    description: str = ""
 
 
 def com_object_display_name(co: ComObject) -> str:
@@ -172,6 +179,7 @@ class Device:
     name: str
     app: Application
     individual_address: str
+    description: str = ""
     com_objects: list[ComObject] = field(default_factory=list[ComObject])
     parameter_instance_refs: list[ParameterInstanceRef] = field(
         default_factory=list, repr=False, compare=False
@@ -305,7 +313,9 @@ class Device:
             ui_co = ui_by_id.get(co.id)
             if ui_co is None:
                 continue
-            co.name = ui_co.name
+            # Prefer the per-instance ETS override (@Text/@FunctionText) over the app default.
+            co.name = co.text_override or ui_co.name
+            co.function_text = co.function_text_override or ui_co.function_text
             co.number = ui_co.number
             co.object_size = ui_co.object_size
             co.priority = ui_co.priority

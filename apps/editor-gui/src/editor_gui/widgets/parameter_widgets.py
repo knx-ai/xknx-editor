@@ -330,7 +330,10 @@ def render_ui_tree(
                 if needle and not _node_matches(tab, needle):
                     continue
                 label = _tab_label(tab)
-                if imgui.begin_tab_item(f"{label}##{device.node_id}_{tab.id}")[0]:
+                # Key the tab by the stable id suffix only (###), not the label: a param change can
+                # recompute the tab's text (parameter-driven names), and with ## the label folds into
+                # the imgui id, so a changed label loses the selection and jumps back to the first tab.
+                if imgui.begin_tab_item(f"{label}###{device.node_id}_{tab.id}")[0]:
                     req = _render_children(
                         device,
                         tab.children,

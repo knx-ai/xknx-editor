@@ -57,7 +57,7 @@ def test_reopen_migrates_json_column_to_valid_default(tmp_path: Path) -> None:
     path = tmp_path / "proj.xknx"
     svc = ProjectService()
     pid = svc.create(path)
-    seg = svc.create_line(pid, svc.create_area(pid, 0, 1, "A"), 1, "L")
+    seg = svc.create_line(pid, svc.create_area(pid, 0, 2, "A"), 1, "L")
     segment_id = next(
         line.segments[0].id
         for area in svc.topology(pid, 0).areas

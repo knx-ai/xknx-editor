@@ -119,7 +119,7 @@ def _project_with_module_and_binary(tmp_path: Path) -> Path:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
     pid = svc.create(src, "P-BM")
-    seg = svc.create_line(pid, svc.create_area(pid, 0, 1, "A"), 1, "L")
+    seg = svc.create_line(pid, svc.create_area(pid, 0, 2, "A"), 1, "L")
     segment_id = next(
         line.segments[0].id
         for area in svc.topology(pid, 0).areas

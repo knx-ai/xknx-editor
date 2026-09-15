@@ -196,6 +196,9 @@ class GroupObjectsTable:
 
         imgui.table_set_column_index(1)
         imgui.text(com_object_display_name(com_object))
+        # The per-instance ETS @Description (free-text note) has no column of its own; show it on hover.
+        if com_object.description and imgui.is_item_hovered():
+            imgui.set_tooltip(com_object.description)
 
         imgui.table_set_column_index(2)
         imgui.text_disabled(getattr(com_object.dpt, "name", "") or "")
@@ -257,11 +260,18 @@ class GroupObjectsTable:
         _, self._create_name = imgui.input_text_with_hint(
             "##newname", S.GA_CREATE_NAME_HINT, self._create_name
         )
-        if imgui.button(S.GA_CREATE_BUTTON, imgui.ImVec2(_PICKER_WIDTH, 0)):
+        # Share one row: Create fills the remaining width, Cancel keeps a fixed width so it stays
+        # inside the window (a full-width Create button pushed Cancel off the right edge).
+        cancel_w = 90.0
+        spacing = imgui.get_style().item_spacing.x
+        create_w = max(120.0, imgui.get_content_region_avail().x - cancel_w - spacing)
+        if imgui.button(S.GA_CREATE_BUTTON, imgui.ImVec2(create_w, 0)):
             self._on_create_and_link(device, com_object, address, self._create_name)
             self._add_open = False  # created + linked -> close the dialog
         imgui.same_line()
-        if imgui.button(f"{S.GROUP_OBJECTS_BATCH_CANCEL}##newga_cancel"):
+        if imgui.button(
+            f"{S.GROUP_OBJECTS_BATCH_CANCEL}##newga_cancel", imgui.ImVec2(cancel_w, 0)
+        ):
             self._add_open = False
         imgui.separator()
 

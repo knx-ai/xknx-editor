@@ -1067,3 +1067,16 @@ msgstr "Diesen Ordner und alle enthaltenen Gruppenadressen löschen? Kann rückg
 
 msgid "Apply changes to all channels"
 msgstr "Änderungen auf alle Kanäle anwenden"
+
+msgid "S"
+msgstr "S"
+
+msgid ""
+"S = Sending. This object sends its value to the group address; the others "
+"only receive it."
+msgstr ""
+"S = Sendend. Dieses Objekt sendet seinen Wert an die Gruppenadresse; die "
+"anderen empfangen ihn nur."
+
+msgid "Click to open this device in the editor"
+msgstr "Klicken, um dieses Gerät im Editor zu öffnen"

@@ -8,13 +8,15 @@ and any pre-change values ``revert`` needs — through the ``events`` JSON colum
 
 from __future__ import annotations
 
+import base64
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
+from xknxeditor.proj.core.identity import qualified_com_object_ref
 from xknxeditor.proj.core.skeleton import MEDIUM_IP
 from xknxeditor.proj.models import (
     Area,
@@ -391,10 +393,14 @@ class UpdateDeviceApplication(Event):
         snap: dict[str, Any] = {
             "id": co.id,
             "ref_id": co.ref_id,
+            "instance_ref_id": co.instance_ref_id,
             "channel_id": co.channel_id,
             "links": [
                 [link.id, link.group_address_id, link.is_sending] for link in co.links
             ],
+            "text_override": co.text_override,
+            "function_text_override": co.function_text_override,
+            "description_override": co.description_override,
         }
         for flag in self._CO_FLAGS:
             snap[flag] = getattr(co, flag)
@@ -441,7 +447,17 @@ class UpdateDeviceApplication(Event):
             if new_ref is None:
                 self.deleted_com_objects.append(self._snapshot_co(co))
                 session.delete(co)
-            elif new_ref != co.ref_id:
+                continue
+            # ETS4 can store a fully app-prefixed instance_ref_id; re-prefix it to the new
+            # application too, or the qualified lookup would double-prefix (NEWAPP_OLDAPP_...).
+            if co.instance_ref_id.startswith(self.old_app_id):
+                new_inst = self.new_app_id + co.instance_ref_id[len(self.old_app_id) :]
+                if new_inst != co.instance_ref_id:
+                    self.renamed.append(
+                        ["OI", str(co.id), co.instance_ref_id, new_inst]
+                    )
+                    co.instance_ref_id = new_inst
+            if new_ref != co.ref_id:
                 self.renamed.append(["O", str(co.id), co.ref_id, new_ref])
                 co.ref_id = new_ref
         session.flush()
@@ -458,13 +474,18 @@ class UpdateDeviceApplication(Event):
                 setattr(device, col, value)
 
         for kind, row_id, old_ref, _new_ref in self.renamed:
-            row = (
-                session.get(Parameter, int(row_id))
-                if kind == "P"
-                else session.get(ComObject, int(row_id))
-            )
-            if row is not None:
-                row.ref_id = old_ref
+            if kind == "P":
+                param = session.get(Parameter, int(row_id))
+                if param is not None:
+                    param.ref_id = old_ref
+                continue
+            co = session.get(ComObject, int(row_id))
+            if co is None:
+                continue
+            if kind == "OI":
+                co.instance_ref_id = old_ref
+            else:
+                co.ref_id = old_ref
 
         for pid, ref_id, value in self.deleted_params:
             param = Parameter(device_id=self.device_id, ref_id=ref_id, value=value)
@@ -475,7 +496,11 @@ class UpdateDeviceApplication(Event):
             co = ComObject(
                 device_id=self.device_id,
                 ref_id=snap["ref_id"],
+                instance_ref_id=snap.get("instance_ref_id", ""),
                 channel_id=snap["channel_id"],
+                text_override=snap.get("text_override"),
+                function_text_override=snap.get("function_text_override"),
+                description_override=snap.get("description_override"),
             )
             co.id = snap["id"]
             for flag in self._CO_FLAGS:
@@ -532,6 +557,11 @@ class SyncDeviceComObjects(Event):
 
     device_id: int
     target: list[list[str | None]] = field(default_factory=list[list[str | None]])
+    # The app program id, so existing rows can be resolved to the same qualified per-instance ref the
+    # ``target`` speaks (module instances collapse in ``ComObject.ref_id``; see
+    # :func:`qualified_com_object_ref`). Empty only for legacy/non-module callers, where ``ref_id`` is
+    # already the qualified id.
+    app_program_id: str = ""
     added_ids: list[int] = field(default_factory=list[int])
     removed: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
@@ -539,10 +569,14 @@ class SyncDeviceComObjects(Event):
         snap: dict[str, Any] = {
             "id": co.id,
             "ref_id": co.ref_id,
+            "instance_ref_id": co.instance_ref_id,
             "channel_id": co.channel_id,
             "links": [
                 [link.id, link.group_address_id, link.is_sending] for link in co.links
             ],
+            "text_override": co.text_override,
+            "function_text_override": co.function_text_override,
+            "description_override": co.description_override,
         }
         for flag in COM_OBJECT_FLAGS:
             snap[flag] = getattr(co, flag)
@@ -553,16 +587,25 @@ class SyncDeviceComObjects(Event):
         if device is None:
             return
         target_refs = {row[0] for row in self.target}
-        existing = {co.ref_id for co in device.com_objects}
+        # Match on the qualified per-instance ref, not the stored (module-instance-stripped) ``ref_id``
+        # — otherwise every imported module object mismatches ``target`` and would be deleted and
+        # recreated, dropping its links and flag overrides.
+        existing_by_qual = {
+            qualified_com_object_ref(
+                co.ref_id, co.instance_ref_id, self.app_program_id
+            ): co
+            for co in device.com_objects
+        }
 
         self.removed = []
-        for co in list(device.com_objects):
-            if co.ref_id not in target_refs:
+        for qual, co in existing_by_qual.items():
+            if qual not in target_refs:
                 self.removed.append(self._snapshot_co(co))
                 session.delete(co)
         session.flush()
 
-        to_add = [row for row in self.target if row[0] not in existing]
+        existing_quals = set(existing_by_qual)
+        to_add = [row for row in self.target if row[0] not in existing_quals]
         new_cos: list[ComObject] = []
         for i, row in enumerate(to_add):
             ref_id, channel_id = row[0], (row[1] if len(row) > 1 else None)
@@ -590,7 +633,11 @@ class SyncDeviceComObjects(Event):
             co = ComObject(
                 device_id=self.device_id,
                 ref_id=snap["ref_id"],
+                instance_ref_id=snap.get("instance_ref_id", ""),
                 channel_id=snap["channel_id"],
+                text_override=snap.get("text_override"),
+                function_text_override=snap.get("function_text_override"),
+                description_override=snap.get("description_override"),
             )
             co.id = snap["id"]
             for flag in COM_OBJECT_FLAGS:
@@ -611,6 +658,7 @@ class SyncDeviceComObjects(Event):
         return {
             "device_id": self.device_id,
             "target": self.target,
+            "app_program_id": self.app_program_id,
             "added_ids": self.added_ids,
             "removed": self.removed,
         }
@@ -1182,6 +1230,38 @@ class SetDeviceName(Event):
 
 @_register
 @dataclass
+class SetDeviceDescription(Event):
+    event_type: ClassVar[str] = "SetDeviceDescription"
+
+    device_id: int
+    description: str
+    old_description: str | None = None
+
+    def apply(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None:
+            self.old_description = device.description
+            device.description = self.description
+
+    def revert(self, session: Session) -> None:
+        device = session.get(Device, self.device_id)
+        if device is not None and self.old_description is not None:
+            device.description = self.old_description
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "device_id": self.device_id,
+            "description": self.description,
+            "old_description": self.old_description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SetDeviceDescription:
+        return cls(**data)
+
+
+@_register
+@dataclass
 class MoveDevice(Event):
     """Relocate a device to a different segment and/or set a new individual-address octet."""
 
@@ -1223,24 +1303,12 @@ class MoveDevice(Event):
 
 # --- subtree snapshot/restore helpers -------------------------------------------------
 
+# Every mapped model, keyed by class name, for snapshot/restore. Derived from the SQLAlchemy
+# registry (not a hand-kept list) so a newly added cascade-owned model — e.g. DeviceAdditionalAddress
+# or Trade — is covered automatically; a stale list here silently breaks undo with a KeyError in
+# _restore_rows when such a row appears in a snapshotted subtree.
 _MODELS: dict[str, type[Base]] = {
-    m.__name__: m
-    for m in (
-        Installation,
-        Area,
-        Line,
-        Segment,
-        Device,
-        ModuleInstance,
-        Parameter,
-        ComObject,
-        GroupRange,
-        GroupAddress,
-        ComObjectLink,
-        Function,
-        FunctionGroupAddress,
-        Space,
-    )
+    mapper.class_.__name__: mapper.class_ for mapper in Base.registry.mappers
 }
 
 
@@ -1248,8 +1316,27 @@ def _row_to_dict(obj: Base) -> dict[str, Any]:
     mapper = sa_inspect(type(obj))
     data: dict[str, Any] = {"__model__": type(obj).__name__}
     for column in mapper.columns:
-        data[column.name] = getattr(obj, column.name)
+        value = getattr(obj, column.name)
+        # The whole snapshot is round-tripped through the ``events`` JSON column, which cannot hold
+        # raw bytes (e.g. ``DeviceBinaryData.data`` for an MDT DALI DCA backup). Base64-encode them
+        # behind a marker so ``_restore_rows`` can turn them back into bytes verbatim.
+        if isinstance(value, bytes):
+            value = {"__bytes_b64__": base64.b64encode(value).decode("ascii")}
+        data[column.name] = value
     return data
+
+
+def _cascades_on_delete(rel: Any) -> bool:
+    """True if the child rows of a ONETOMANY relationship carry a DB-level ``ON DELETE CASCADE`` FK.
+
+    Such rows vanish when the parent is deleted even without an ORM ``delete-orphan`` cascade (e.g.
+    ``TradeDevice.device_id``, where ``Trade`` owns the association but a device delete still drops
+    it). They must be snapshotted so undo can restore them."""
+    return any(
+        (fk.ondelete or "").upper() == "CASCADE"
+        for col in rel.remote_side
+        for fk in col.foreign_keys
+    )
 
 
 def _snapshot_subtree(obj: Base) -> list[dict[str, Any]]:
@@ -1257,7 +1344,9 @@ def _snapshot_subtree(obj: Base) -> list[dict[str, Any]]:
     rows = [_row_to_dict(obj)]
     mapper = sa_inspect(type(obj))
     for rel in mapper.relationships:
-        if rel.direction.name == "ONETOMANY" and rel.cascade.delete_orphan:
+        if rel.direction.name == "ONETOMANY" and (
+            rel.cascade.delete_orphan or _cascades_on_delete(rel)
+        ):
             for child in getattr(obj, rel.key):
                 rows.extend(_snapshot_subtree(child))
     return rows
@@ -1267,6 +1356,11 @@ def _restore_rows(session: Session, rows: list[dict[str, Any]]) -> None:
     for data in rows:
         payload = dict(data)
         model = _MODELS[payload.pop("__model__")]
+        for key, value in payload.items():
+            # Reverse the base64 marker written by ``_row_to_dict`` for bytes columns.
+            if isinstance(value, dict) and "__bytes_b64__" in value:
+                encoded = cast(str, value["__bytes_b64__"])
+                payload[key] = base64.b64decode(encoded)
         session.add(model(**payload))
     session.flush()
 

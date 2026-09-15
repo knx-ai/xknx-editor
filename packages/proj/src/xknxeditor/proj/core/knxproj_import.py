@@ -36,18 +36,27 @@ from xknxproject.models.models import (
     ComObjectInstanceRef,
     DeviceInstance,
     XMLGroupRange,
+    XMLLine,
     XMLSpace,
 )
 from xknxproject.xml import XMLParser
 from xknxproject.zip.extractor import extract
 
 from xknxeditor.proj.core.addressing import GroupAddressStyle
+from xknxeditor.proj.core.import_notes import (
+    DROPPED_DUPLICATE_LINES,
+    MULTI_SEGMENT,
+    MULTIPLE_INSTALLATIONS,
+    ImportLoss,
+    dumps,
+)
 from xknxeditor.proj.db import make_engine, url_for
 from xknxeditor.proj.models import (
     Area,
     ComObject,
     ComObjectLink,
     Device,
+    DeviceAdditionalAddress,
     DeviceBinaryData,
     Function,
     FunctionGroupAddress,
@@ -61,6 +70,8 @@ from xknxeditor.proj.models import (
     ProjectTrace,
     Segment,
     Space,
+    Trade,
+    TradeDevice,
 )
 
 logger = logging.getLogger(__name__)
@@ -154,6 +165,45 @@ class _TraceEntry:
     comment: str
 
 
+@dataclass(frozen=True, slots=True)
+class _AddrEntry:
+    """A DeviceInstance ``<AdditionalAddresses>/<Address>``: an extra individual address a coupler or
+    interface reserves. ``address`` is the 1-255 octet (``None`` only for the schema-optional case)."""
+
+    address: int | None
+    name: str = ""
+    description: str = ""
+    comment: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _SegmentDesc:
+    """A raw ``<Segment>`` (project/22+23) of a line: its ``Number``, ``MediumTypeRefId``,
+    ``DomainAddress`` and the ``@Id`` of every ``DeviceInstance`` nested under it. Used to rebuild
+    one ``Segment`` per raw segment (xknxproject collapses them, reassigning devices and losing the
+    per-segment domain)."""
+
+    number: int
+    medium_type_ref: str | None
+    domain_address: int | None
+    device_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TradeEntry:
+    """A ``Trades/Trade`` node (Gewerke), captured verbatim. ``device_ids`` are the referenced
+    DeviceInstance ``@Id``s (``DeviceInstanceRef/@RefId``); ``children`` are the nested trades."""
+
+    name: str
+    number: str
+    comment: str
+    description: str
+    completion_status: str
+    context: str
+    device_ids: list[str]
+    children: list[_TradeEntry]
+
+
 # Per-device data read straight from the raw project XML because xknxproject drops it. Keyed by
 # DeviceInstance @Id (== xknxproject's ``DeviceInstance.identifier``).
 BinaryDataMap = dict[str, list[_BinaryEntry]]
@@ -180,6 +230,57 @@ class _RawExtras:
         self.traces: list[_TraceEntry] = []
         # DeviceInstance @Id -> the device's <GroupObjectTree> as a namespace-stripped XML string.
         self.group_object_trees: dict[str, str] = {}
+        # DeviceInstance @Id -> the device's <IPConfig> attributes (IP interface/router config).
+        self.ip_config: dict[str, dict[str, str]] = {}
+        # <Topology>/<UnassignedDevices> devices as namespace-stripped <DeviceInstance> XML strings,
+        # in document order (empty when the source had no such container).
+        self.unassigned_devices: list[str] = []
+        # ComObjectInstanceRef @Id -> (raw @Text, raw @FunctionText, raw @Description) per-instance
+        # overrides. Read from the raw XML because xknxproject backfills these from the app default
+        # post-parse, so the parsed object can no longer tell an instance override from an inherited
+        # default.
+        self.com_object_text_overrides: dict[
+            str, tuple[str | None, str | None, str | None]
+        ] = {}
+        # --- coupler data xknxproject does not surface (read straight from the raw XML) ---
+        # (Area @Address, Line @Address) -> coupler pass-through group addresses
+        # (``AdditionalGroupAddresses``; on the Segment in project/22+23, on the Line in 14+20).
+        self.line_pass_through: dict[tuple[int, int], list[int]] = {}
+        # (Area @Address, Line @Address) -> RF/PL ``DomainAddress`` (Line in 14+20, Segment in 22+23).
+        self.domain_address: dict[tuple[int, int], int] = {}
+        # (Area @Address, Line @Address) -> the line's raw ``<Segment>`` descriptors (project/22+23),
+        # in document order. Empty for project/14+20 (devices sit directly under the Line).
+        self.segments: dict[tuple[int, int], list[_SegmentDesc]] = {}
+        # Raw group-address values whose <GroupAddress> carries ``Unfiltered="true"``.
+        self.unfiltered_ga: set[int] = set()
+        # (RangeStart, RangeEnd) of every <GroupRange> carrying ``Unfiltered="true"``.
+        self.unfiltered_ranges: set[tuple[int, int]] = set()
+        # DeviceInstance @Id -> extra individual addresses (``AdditionalAddresses/Address``).
+        self.additional_addresses: dict[str, list[_AddrEntry]] = {}
+        # --- descriptive metadata xknxproject does not surface (read from the raw XML) ---
+        # The ProjectInformation @Comment (project.xml).
+        self.project_comment: str = ""
+        # Area @Address -> Area @Comment.
+        self.area_comment: dict[int, str] = {}
+        # (Area @Address, Line @Address) -> Line @Comment.
+        self.line_comment: dict[tuple[int, int], str] = {}
+        # (RangeStart, RangeEnd) -> GroupRange @Description.
+        self.grouprange_description: dict[tuple[int, int], str] = {}
+        # Raw group-address values whose <GroupAddress> carries ``Central="true"``.
+        self.central_ga: set[int] = set()
+        # Raw group-address values whose <GroupAddress> carries ``Global="true"``.
+        self.global_ga: set[int] = set()
+        # DeviceInstance @Id -> DeviceInstance @Comment.
+        self.device_comment: dict[str, str] = {}
+        # Space @Id -> Space @Comment.
+        self.space_comment: dict[str, str] = {}
+        # Function @Id -> (Comment, Description).
+        self.function_meta: dict[str, tuple[str, str]] = {}
+        # Installation <Trades> tree (Gewerke), captured verbatim.
+        self.trades: list[_TradeEntry] = []
+        # Import-loss notes detected from the raw XML (see core.import_notes). Build-time losses
+        # (dropped duplicate lines) are appended during topology construction.
+        self.losses: list[ImportLoss] = []
 
 
 def _parse(
@@ -195,7 +296,7 @@ def _parse(
         # re-emit module-based devices on export, so read both from the raw installation XML while the
         # archive is still open.
         extras = _read_device_extras(contents)
-        extras.traces = _read_project_traces(contents)
+        extras.project_comment, extras.traces = _read_project_meta(contents)
     logger.debug(
         "parsed knxproj '%s': %d devices, %d group addresses, %d w/ binary data, %d w/ modules, %d traces",
         parser.project_info.name,
@@ -209,7 +310,10 @@ def _parse(
 
 
 def _read_device_extras(contents: _ProjectContents) -> _RawExtras:
-    """Extract each DeviceInstance's ``<BinaryData>`` and ``<ModuleInstances>`` from the raw ``0.xml``.
+    """Extract from the raw ``0.xml`` what xknxproject drops: per-device ``<BinaryData>``,
+    ``<ModuleInstances>``, ``<GroupObjectTree>`` and ``<AdditionalAddresses>``, plus the coupler
+    routing data (``AdditionalGroupAddresses`` pass-through and ``Unfiltered`` flags on the
+    group-address tree).
 
     ``contents`` is xknxproject's ``KNXProjContents``; ``open_project_0`` yields the installation
     XML. Best-effort: any parse failure leaves the result empty rather than aborting the import.
@@ -237,7 +341,239 @@ def _read_device_extras(contents: _ProjectContents) -> _RawExtras:
         tree = _read_group_object_tree(device)
         if tree:
             extras.group_object_trees[device_id] = tree
+        ip_config = _read_ip_config(device)
+        if ip_config is not None:
+            extras.ip_config[device_id] = ip_config
+        additional = _read_additional_addresses(device)
+        if additional:
+            extras.additional_addresses[device_id] = additional
+        comment = device.get("Comment")
+        if comment:
+            extras.device_comment[device_id] = comment
+        for cid, override in _read_com_object_text_overrides(device):
+            extras.com_object_text_overrides[cid] = override
+    extras.unassigned_devices = _read_unassigned_devices(root)
+    _read_coupler_extras(root, extras)
+    _read_locations_extras(root, extras)
+    extras.trades = _read_trades(root)
+    extras.losses = _detect_import_losses(root, extras)
     return extras
+
+
+def _int_attr(elem: ET.Element, name: str) -> int | None:
+    """The named attribute parsed as an int, or ``None`` when absent or non-numeric."""
+    value = elem.get(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _is_true(value: str | None) -> bool:
+    """XML-schema boolean truthiness (``"true"``/``"1"``)."""
+    return value is not None and value.strip().lower() in ("true", "1")
+
+
+def _read_additional_addresses(device: ET.Element) -> list[_AddrEntry]:
+    """The device's ``<AdditionalAddresses>/<Address>`` entries (extra individual addresses)."""
+    for child in device:
+        if _localname(child.tag) != "AdditionalAddresses":
+            continue
+        return [
+            _AddrEntry(
+                address=_int_attr(addr, "Address"),
+                name=addr.get("Name", "") or "",
+                description=addr.get("Description", "") or "",
+                comment=addr.get("Comment", "") or "",
+            )
+            for addr in child
+            if _localname(addr.tag) == "Address"
+        ]
+    return []
+
+
+def _read_ip_config(device: ET.Element) -> dict[str, str] | None:
+    """The device's ``<IPConfig>`` attributes (IP interface/router config), or ``None`` if absent.
+
+    ``IPConfig_t`` carries only attributes (Assign, IPAddress, SubnetMask, DefaultGateway,
+    MACAddress) and no children, so the local-name attribute dict is a lossless capture that the
+    exporter re-emits verbatim. xknxproject does not surface it.
+    """
+    for child in device:
+        if _localname(child.tag) == "IPConfig":
+            return {_localname(k): v for k, v in child.attrib.items()}
+    return None
+
+
+def _read_aga_addresses(parent: ET.Element) -> list[int]:
+    """The ``<AdditionalGroupAddresses>/<GroupAddress @Address>`` values directly under ``parent``."""
+    out: list[int] = []
+    for child in parent:
+        if _localname(child.tag) != "AdditionalGroupAddresses":
+            continue
+        for ga in child:
+            if _localname(ga.tag) != "GroupAddress":
+                continue
+            addr = _int_attr(ga, "Address")
+            if addr is not None:
+                out.append(addr)
+    return out
+
+
+def _read_coupler_extras(root: ET.Element, extras: _RawExtras) -> None:
+    """Read the topology data xknxproject drops from ``root``: per-line ``AdditionalGroupAddresses``
+    pass-through (on the Segment in project/22+23, on the Line in 14+20), the ``Unfiltered`` flags on
+    the group-address tree, plus the descriptive metadata it also omits — Area/Line ``@Comment``,
+    GroupRange ``@Description`` and the group-address ``Central`` flag."""
+    for area in root.iter():
+        if _localname(area.tag) != "Area":
+            continue
+        a_addr = _int_attr(area, "Address")
+        if a_addr is not None and (a_comment := area.get("Comment")):
+            extras.area_comment[a_addr] = a_comment
+        for line in area:
+            if _localname(line.tag) != "Line":
+                continue
+            l_addr = _int_attr(line, "Address")
+            if (
+                a_addr is not None
+                and l_addr is not None
+                and (l_comment := line.get("Comment"))
+            ):
+                extras.line_comment[(a_addr, l_addr)] = l_comment
+            addrs = _read_aga_addresses(line)
+            # ``DomainAddress`` (RF/PL) sits on the Line in project/14+20 and on the Segment in
+            # project/22+23; xknxproject drops it either way. Prefer the Segment value when present.
+            domain = _int_attr(line, "DomainAddress")
+            seg_descs: list[_SegmentDesc] = []
+            for seg in line:
+                if _localname(seg.tag) == "Segment":
+                    addrs.extend(_read_aga_addresses(seg))
+                    seg_domain = _int_attr(seg, "DomainAddress")
+                    if seg_domain is not None:
+                        domain = seg_domain
+                    device_ids = tuple(
+                        did
+                        for d in seg.iter()
+                        if _localname(d.tag) == "DeviceInstance"
+                        and (did := d.get("Id"))
+                    )
+                    seg_descs.append(
+                        _SegmentDesc(
+                            number=_int_attr(seg, "Number") or 0,
+                            medium_type_ref=seg.get("MediumTypeRefId"),
+                            domain_address=seg_domain,
+                            device_ids=device_ids,
+                        )
+                    )
+            if seg_descs and a_addr is not None and l_addr is not None:
+                extras.segments[(a_addr, l_addr)] = seg_descs
+            if domain is not None and a_addr is not None and l_addr is not None:
+                extras.domain_address[(a_addr, l_addr)] = domain
+            if addrs and a_addr is not None and l_addr is not None:
+                extras.line_pass_through[(a_addr, l_addr)] = addrs
+    for elem in root.iter():
+        name = _localname(elem.tag)
+        if name == "GroupRange":
+            start, end = _int_attr(elem, "RangeStart"), _int_attr(elem, "RangeEnd")
+            if start is not None and end is not None:
+                if _is_true(elem.get("Unfiltered")):
+                    extras.unfiltered_ranges.add((start, end))
+                if description := elem.get("Description"):
+                    extras.grouprange_description[(start, end)] = description
+        elif name == "GroupAddress":
+            addr = _int_attr(elem, "Address")
+            if addr is not None:
+                if _is_true(elem.get("Unfiltered")):
+                    extras.unfiltered_ga.add(addr)
+                if _is_true(elem.get("Central")):
+                    extras.central_ga.add(addr)
+                if _is_true(elem.get("Global")):
+                    extras.global_ga.add(addr)
+
+
+def _detect_import_losses(root: ET.Element, extras: _RawExtras) -> list[ImportLoss]:
+    """Detect, from the raw ``0.xml``, data classes ETS carries that our store cannot fully
+    represent, so the user can be told what a round-trip export will merge or drop. Best-effort and
+    read-only; the dropped-duplicate-line loss is added later during topology construction."""
+    losses: list[ImportLoss] = []
+
+    installations = [e for e in root.iter() if _localname(e.tag) == "Installation"]
+    if len(installations) > 1:
+        losses.append(ImportLoss(MULTIPLE_INSTALLATIONS, len(installations), detail=""))
+
+    # <UnassignedDevices> (devices not placed on a line) and per-device <IPConfig> (IP interface/
+    # router config) are now preserved verbatim through import/export (see Installation
+    # .unassigned_devices_xml and Device.ip_config), so neither is reported as a loss here.
+
+    # Per-instance com-object overrides (@Text/@FunctionText/@Description) are now preserved through
+    # import/export (see _build_com_object), so they are no longer a loss and not reported here.
+
+    multi_segment_lines = sum(1 for segs in extras.segments.values() if len(segs) > 1)
+    if multi_segment_lines:
+        losses.append(ImportLoss(MULTI_SEGMENT, multi_segment_lines, detail=""))
+
+    return losses
+
+
+def _read_locations_extras(root: ET.Element, extras: _RawExtras) -> None:
+    """Read the descriptive metadata xknxproject drops from the Locations tree: each ``Space``
+    ``@Comment`` (keyed by ``@Id``) and each ``Function`` ``@Comment``/``@Description``.
+
+    Space metadata keys by the raw ``@Id`` because xknxproject exposes ``XMLSpace.identifier``
+    verbatim. Function metadata must key by the *stripped* identifier: xknxproject derives
+    ``XMLFunction.identifier`` as ``Id.split("_", 1)[1]`` (dropping the leading project-prefix
+    segment), and the builder looks these up by that identifier, so a full-``@Id`` key would never
+    match and the comment/description would be silently lost on import."""
+    for elem in root.iter():
+        name = _localname(elem.tag)
+        if name == "Space":
+            sid = elem.get("Id")
+            if sid and (comment := elem.get("Comment")):
+                extras.space_comment[sid] = comment
+        elif name == "Function":
+            fid = elem.get("Id")
+            comment = elem.get("Comment") or ""
+            description = elem.get("Description") or ""
+            if fid and (comment or description):
+                key = fid.split("_", 1)[1] if "_" in fid else fid
+                extras.function_meta[key] = (comment, description)
+
+
+def _read_trades(root: ET.Element) -> list[_TradeEntry]:
+    """Read the Installation ``<Trades>`` tree (Gewerke), which xknxproject does not surface.
+
+    Only the first ``<Trades>`` container is read; each ``Trade`` keeps its nested trades and the
+    ``@RefId`` of every ``DeviceInstanceRef`` so the tree round-trips on export."""
+    container = next((e for e in root.iter() if _localname(e.tag) == "Trades"), None)
+    if container is None:
+        return []
+    return [
+        _read_trade(child) for child in container if _localname(child.tag) == "Trade"
+    ]
+
+
+def _read_trade(elem: ET.Element) -> _TradeEntry:
+    device_ids = [
+        ref
+        for child in elem
+        if _localname(child.tag) == "DeviceInstanceRef" and (ref := child.get("RefId"))
+    ]
+    children = [
+        _read_trade(child) for child in elem if _localname(child.tag) == "Trade"
+    ]
+    return _TradeEntry(
+        name=elem.get("Name") or "",
+        number=elem.get("Number") or "",
+        comment=elem.get("Comment") or "",
+        description=elem.get("Description") or "",
+        completion_status=elem.get("CompletionStatus") or "",
+        context=elem.get("Context") or "",
+        device_ids=device_ids,
+        children=children,
+    )
 
 
 def _strip_ns(elem: ET.Element) -> ET.Element:
@@ -269,21 +605,72 @@ def _read_group_object_tree(device: ET.Element) -> str:
     return ""
 
 
-def _read_project_traces(contents: _ProjectContents) -> list[_TraceEntry]:
-    """Every ``ProjectInformation/ProjectTraces/ProjectTrace`` from the raw ``project.xml``.
+def _read_unassigned_devices(root: ET.Element) -> list[str]:
+    """The ``<Topology>/<UnassignedDevices>`` devices as namespace-stripped ``<DeviceInstance>`` XML
+    strings, in document order (empty when there is no such container).
 
-    xknxproject does not surface the project log, so read it from the raw project metadata while the
-    archive is open. Best-effort: any failure yields an empty list rather than aborting the import.
-    The ``Comment`` is kept verbatim (ETS encrypts it); order follows the document.
+    ETS keeps devices that are not yet placed on a line here. xknxproject does not expose them (they
+    are absent from ``parser.areas``), and they have no line/segment to attach to, so the whole
+    subtree is captured verbatim for a lossless re-export as opaque provenance.
+    """
+    container = next(
+        (e for e in root.iter() if _localname(e.tag) == "UnassignedDevices"), None
+    )
+    if container is None:
+        return []
+    return [
+        ET.tostring(_strip_ns(child), encoding="unicode")
+        for child in container
+        if _localname(child.tag) == "DeviceInstance"
+    ]
+
+
+def _read_com_object_text_overrides(
+    device: ET.Element,
+) -> list[tuple[str, tuple[str | None, str | None, str | None]]]:
+    """Per-instance ``@Text``/``@FunctionText``/``@Description`` overrides, keyed by
+    ``ComObjectInstanceRef @Id``.
+
+    xknxproject backfills the text/function-text from the application-program default after parsing, so
+    the raw XML is the only place the genuine user override survives. Yields only refs carrying at
+    least one of the three attributes; an absent attribute stays ``None`` (inherit the app default).
+    """
+    result: list[tuple[str, tuple[str | None, str | None, str | None]]] = []
+    for elem in device.iter():
+        if _localname(elem.tag) != "ComObjectInstanceRef":
+            continue
+        cid = elem.get("Id")
+        if not cid:
+            continue
+        text = elem.get("Text")
+        function_text = elem.get("FunctionText")
+        description = elem.get("Description")
+        if text is not None or function_text is not None or description is not None:
+            result.append((cid, (text, function_text, description)))
+    return result
+
+
+def _read_project_meta(contents: _ProjectContents) -> tuple[str, list[_TraceEntry]]:
+    """The ``ProjectInformation`` ``@Comment`` and every ``ProjectTraces/ProjectTrace`` from the raw
+    ``project.xml``.
+
+    xknxproject surfaces neither, so read them from the raw project metadata while the archive is
+    open. Best-effort: any failure yields ``("", [])`` rather than aborting the import. The trace
+    ``Comment`` is kept verbatim (ETS encrypts it); order follows the document.
     """
     raw = _read_project_file(contents, "project.xml")
     if raw is None:
-        return []
+        return "", []
     try:
         root = ET.fromstring(raw)
     except ET.ParseError as e:
-        logger.debug("could not parse project.xml for project traces: %s", e)
-        return []
+        logger.debug("could not parse project.xml for project metadata: %s", e)
+        return "", []
+    comment = ""
+    for elem in root.iter():
+        if _localname(elem.tag) == "ProjectInformation":
+            comment = elem.get("Comment") or ""
+            break
     traces: list[_TraceEntry] = []
     for elem in root.iter():
         if _localname(elem.tag) != "ProjectTrace":
@@ -295,7 +682,7 @@ def _read_project_traces(contents: _ProjectContents) -> list[_TraceEntry]:
                 comment=elem.get("Comment") or "",
             )
         )
-    return traces
+    return comment, traces
 
 
 def _read_binary_data(
@@ -391,36 +778,41 @@ def _localname(tag: str) -> str:
 
 def _build(session: Session, parser: XMLParser, pid: str, extras: _RawExtras) -> None:
     info = parser.project_info
-    session.add(
-        Project(
-            id=pid,
-            name=info.name,
-            group_address_style=_style(info.group_address_style.value),
-            guid=info.guid,
-            created_by=info.created_by,
-            last_modified=info.last_modified or "",
-            schema_version=info.schema_version,
-            tool_version=info.tool_version,
-            traces=[
-                ProjectTrace(
-                    project_id=pid,
-                    date=t.date,
-                    user_name=t.user_name,
-                    comment=t.comment,
-                )
-                for t in extras.traces
-            ],
-        )
+    project = Project(
+        id=pid,
+        name=info.name,
+        group_address_style=_style(info.group_address_style.value),
+        guid=info.guid,
+        created_by=info.created_by,
+        last_modified=info.last_modified or "",
+        schema_version=info.schema_version,
+        tool_version=info.tool_version,
+        comment=extras.project_comment,
+        traces=[
+            ProjectTrace(
+                project_id=pid,
+                date=t.date,
+                user_name=t.user_name,
+                comment=t.comment,
+            )
+            for t in extras.traces
+        ],
     )
+    session.add(project)
 
     installation = Installation(index=_INSTALLATION_INDEX, name="")
     session.add(installation)
 
     state = _ImportState(extras)
     _build_topology(installation, parser, state)
+    # <UnassignedDevices> devices (not placed on any line): kept verbatim as opaque provenance.
+    installation.unassigned_devices_xml = extras.unassigned_devices or None
     _build_group_addresses(installation, parser, state)
     _build_links(state)
     _build_spaces(installation, parser, state)
+    _build_trades(installation, state)
+    # Import-loss notes (raw-XML detection + any build-time dropped lines), echoed at export.
+    project.import_notes = dumps(state.extras.losses)
 
 
 def _style(value: str) -> GroupAddressStyle:
@@ -436,39 +828,122 @@ def _style(value: str) -> GroupAddressStyle:
 def _build_topology(
     installation: Installation, parser: XMLParser, state: _ImportState
 ) -> None:
+    # xknxproject flattens every <Installation>/Topology into one areas list, discarding the
+    # installation boundary, so two installations that each define area 1 arrive as two XMLArea
+    # objects with the same address. Merge by address (reuse the existing Area/Line) so we never
+    # create duplicate topology rows; a colliding line is dropped and counted as an import loss.
+    areas_by_addr: dict[int, Area] = {}
+    lines_by_area: dict[int, dict[int, Line]] = {}
+    dropped_lines = 0
     for xarea in parser.areas:
-        area = Area(address=xarea.address, name=xarea.name)
-        installation.areas.append(area)
+        area = areas_by_addr.get(xarea.address)
+        if area is None:
+            area = Area(
+                address=xarea.address,
+                name=xarea.name,
+                description=getattr(xarea, "description", "") or "",
+                comment=state.extras.area_comment.get(xarea.address, ""),
+            )
+            installation.areas.append(area)
+            areas_by_addr[xarea.address] = area
+            lines_by_area[xarea.address] = {}
+        area_lines = lines_by_area[xarea.address]
         for xline in xarea.lines:
+            if xline.address in area_lines:
+                dropped_lines += 1
+                continue
             line = Line(
                 address=xline.address,
                 name=xline.name,
-                # getattr: newer xknxproject (KNX PR #651) exposes coupler pass-through addresses as
-                # a list of ints; store comma-separated. Default empty on older versions.
+                description=getattr(xline, "description", "") or "",
+                comment=state.extras.line_comment.get(
+                    (xarea.address, xline.address), ""
+                ),
+                # Coupler pass-through addresses (``AdditionalGroupAddresses``) read from the raw XML
+                # (keyed by area/line address), stored comma-separated. Empty when the line has none.
                 additional_group_addresses=",".join(
-                    str(a) for a in getattr(xline, "additional_group_addresses", [])
+                    str(a)
+                    for a in state.extras.line_pass_through.get(
+                        (xarea.address, xline.address), []
+                    )
                 ),
             )
             area.lines.append(line)
-            segment = Segment(number=0, medium_type=xline.medium_type)
-            line.segments.append(segment)
-            for xdevice in xline.devices:
-                try:
-                    segment.devices.append(_build_device(xdevice, state))
-                except Exception as e:
-                    # Partial load: a single malformed device must not abort the whole import.
-                    logger.warning(
-                        "skipping malformed device on import",
-                        extra={"address": getattr(xdevice, "individual_address", "?")},
-                    )
-                    logger.debug("device import error: %s: %s", type(e).__name__, e)
+            area_lines[xline.address] = line
+            _build_line_segments(line, xarea.address, xline, state)
+    if dropped_lines:
+        state.extras.losses.append(
+            ImportLoss(DROPPED_DUPLICATE_LINES, dropped_lines, detail="")
+        )
+
+
+def _build_line_segments(
+    line: Line, area_address: int, xline: XMLLine, state: _ImportState
+) -> None:
+    """Rebuild the line's segments. project/14+20 lines have no ``<Segment>`` (one default segment
+    holding all devices); project/22+23 lines carry one ``<Segment>`` per descriptor, and devices
+    are placed on their own segment by ``@Id`` membership so multi-segment lines survive intact."""
+    key = (area_address, xline.address)
+    descs = state.extras.segments.get(key, [])
+    default_domain = state.extras.domain_address.get(key)
+    if not descs:
+        segment = Segment(
+            number=0, medium_type=xline.medium_type, domain_address=default_domain
+        )
+        line.segments.append(segment)
+        for xdevice in xline.devices:
+            _append_device(segment, xdevice, state)
+        return
+
+    device_by_id = {xd.identifier: xd for xd in xline.devices}
+    placed: set[str] = set()
+    segments: list[Segment] = []
+    for desc in descs:
+        segment = Segment(
+            number=desc.number,
+            medium_type=desc.medium_type_ref or xline.medium_type,
+            domain_address=(
+                desc.domain_address
+                if desc.domain_address is not None or len(descs) > 1
+                else default_domain
+            ),
+        )
+        line.segments.append(segment)
+        segments.append(segment)
+        for did in desc.device_ids:
+            xdevice = device_by_id.get(did)
+            if xdevice is not None:
+                _append_device(segment, xdevice, state)
+                placed.add(did)
+    # Devices xknxproject listed on the line but not matched to any raw segment fall back to the
+    # first segment rather than being dropped.
+    for xdevice in xline.devices:
+        if xdevice.identifier not in placed:
+            _append_device(segments[0], xdevice, state)
+
+
+def _append_device(
+    segment: Segment, xdevice: DeviceInstance, state: _ImportState
+) -> None:
+    try:
+        segment.devices.append(_build_device(xdevice, state))
+    except Exception as e:
+        # Partial load: a single malformed device must not abort the whole import.
+        logger.warning(
+            "skipping malformed device on import",
+            extra={"address": getattr(xdevice, "individual_address", "?")},
+        )
+        logger.debug("device import error: %s: %s", type(e).__name__, e)
 
 
 def _build_device(xdevice: DeviceInstance, state: _ImportState) -> Device:
     module_args = state.extras.module_args.get(xdevice.identifier, {})
     com_objects: list[ComObject] = []
     for coir in xdevice.com_object_instance_refs:
-        row = _build_com_object(coir)
+        override = state.extras.com_object_text_overrides.get(
+            getattr(coir, "identifier", None) or ""
+        )
+        row = _build_com_object(coir, override)
         com_objects.append(row)
         state.register_com_object(coir, row)
     device = Device(
@@ -477,6 +952,8 @@ def _build_device(xdevice: DeviceInstance, state: _ImportState) -> Device:
         product_ref_id=xdevice.product_ref,
         hardware2program_ref_id=xdevice.hardware_program_ref,
         description=xdevice.description,
+        comment=state.extras.device_comment.get(xdevice.identifier, ""),
+        last_modified=getattr(xdevice, "last_modified", None),
         order_number=xdevice.order_number,
         hardware_name=xdevice.hardware_name,
         product_name=xdevice.product_name,
@@ -514,8 +991,22 @@ def _build_device(xdevice: DeviceInstance, state: _ImportState) -> Device:
         # The <GroupObjectTree> (channel/folder grouping), captured verbatim from the raw XML and
         # re-emitted on export; xknxproject does not surface it (issue #14).
         group_object_tree=state.extras.group_object_trees.get(xdevice.identifier, ""),
+        # The <IPConfig> (IP interface/router config), captured verbatim from the raw XML and
+        # re-emitted on export; xknxproject does not surface it. None when the device had none.
+        ip_config=state.extras.ip_config.get(xdevice.identifier),
+        # Extra individual addresses a coupler/interface reserves (<AdditionalAddresses>), read from
+        # the raw XML (xknxproject drops them) and re-emitted verbatim on export.
+        additional_addresses=[
+            DeviceAdditionalAddress(
+                address=e.address,
+                name=e.name,
+                description=e.description,
+                comment=e.comment,
+            )
+            for e in state.extras.additional_addresses.get(xdevice.identifier, [])
+        ],
     )
-    state.register_device(xdevice.individual_address, device)
+    state.register_device(xdevice.individual_address, xdevice.identifier, device)
     return device
 
 
@@ -535,10 +1026,14 @@ def _build_module_instance(mi: object, module_args: ModuleArgs) -> ModuleInstanc
     )
 
 
-def _build_com_object(coir: ComObjectInstanceRef) -> ComObject:
+def _build_com_object(
+    coir: ComObjectInstanceRef,
+    text_override: tuple[str | None, str | None, str | None] | None = None,
+) -> ComObject:
     # ``com_object_ref_id`` is xknxproject's resolved *definition* id: it runs the ref through
     # strip_module_instance(), so every instance of a module shares one value. Keep the instance's
     # own ``ref_id`` alongside it, or the export cannot tell the instances apart again.
+    text, function_text, description = text_override or (None, None, None)
     return ComObject(
         ref_id=coir.com_object_ref_id or coir.ref_id,
         instance_ref_id=coir.ref_id or "",
@@ -549,6 +1044,9 @@ def _build_com_object(coir: ComObjectInstanceRef) -> ComObject:
         transmit_flag=coir.transmit_flag,
         update_flag=coir.update_flag,
         read_on_init_flag=coir.read_on_init_flag,
+        text_override=text,
+        function_text_override=function_text,
+        description_override=description,
     )
 
 
@@ -559,7 +1057,7 @@ def _build_group_addresses(
     installation: Installation, parser: XMLParser, state: _ImportState
 ) -> None:
     ranges: list[GroupRange] = []
-    _build_ranges(installation, parser.group_ranges, None, ranges)
+    _build_ranges(installation, parser.group_ranges, None, ranges, state)
 
     for xga in parser.group_addresses:
         group_range = _range_for(ranges, xga.raw_address)
@@ -572,8 +1070,13 @@ def _build_group_addresses(
             description=xga.description,
             comment=xga.comment,
             data_secure=bool(xga.data_secure_key),
-            # getattr: only present on newer xknxproject (KNX PR #651); default False otherwise.
-            unfiltered=getattr(xga, "unfiltered", False),
+            # ``Central`` read from the raw XML by address (xknxproject does not surface it).
+            central=xga.raw_address in state.extras.central_ga,
+            # ``Global`` read from the raw XML by address (xknxproject does not surface it).
+            is_global=xga.raw_address in state.extras.global_ga,
+            # ``Unfiltered`` (route through couplers unconditionally) read from the raw XML by
+            # address, since xknxproject does not surface it.
+            unfiltered=xga.raw_address in state.extras.unfiltered_ga,
         )
         group_range.group_addresses.append(ga)
         state.register_group_address(xga.identifier, ga)
@@ -584,18 +1087,25 @@ def _build_ranges(
     xranges: list[XMLGroupRange],
     parent: GroupRange | None,
     collected: list[GroupRange],
+    state: _ImportState,
 ) -> None:
     for xr in xranges:
         gr = GroupRange(
             range_start=xr.range_start,
             range_end=xr.range_end,
             name=xr.name,
+            comment=getattr(xr, "comment", "") or "",
+            # ``Description`` read from the raw XML by (start, end); xknxproject does not surface it.
+            description=state.extras.grouprange_description.get(
+                (xr.range_start, xr.range_end), ""
+            ),
             parent=parent,
-            unfiltered=getattr(xr, "unfiltered", False),
+            # ``Unfiltered`` read from the raw XML by (start, end); xknxproject does not surface it.
+            unfiltered=(xr.range_start, xr.range_end) in state.extras.unfiltered_ranges,
         )
         installation.group_ranges.append(gr)
         collected.append(gr)
-        _build_ranges(installation, xr.group_ranges, gr, collected)
+        _build_ranges(installation, xr.group_ranges, gr, collected, state)
 
 
 def _range_for(ranges: list[GroupRange], address: int) -> GroupRange | None:
@@ -635,10 +1145,13 @@ def _build_spaces(
         space = space_by_identifier.get(func.space_id)
         if space is None:
             continue  # function references a space that was not present
+        comment, description = state.extras.function_meta.get(func.identifier, ("", ""))
         function = Function(
             function_type=func.function_type,
             name=func.name,
             usage_text=func.usage_text,
+            comment=comment,
+            description=description,
             order=order,
         )
         for ref in func.group_addresses:
@@ -662,8 +1175,10 @@ def _build_space(
         space_type=xspace.space_type.value,
         name=xspace.name,
         number=xspace.number,
+        usage=getattr(xspace, "usage_id", None) or "",
         usage_text=xspace.usage_text,
-        description=xspace.description,
+        description=getattr(xspace, "description", "") or "",
+        comment=state.extras.space_comment.get(xspace.identifier, ""),
         order=order,
         parent=parent,
     )
@@ -677,6 +1192,39 @@ def _build_space(
         _build_space(
             installation, child, space, child_order, state, space_by_identifier
         )
+
+
+def _build_trades(installation: Installation, state: _ImportState) -> None:
+    """Rebuild the Installation ``<Trades>`` tree (Gewerke) from the captured entries, resolving each
+    ``DeviceInstanceRef`` back to its :class:`Device` row via the on-disk ``@Id``."""
+    for order, entry in enumerate(state.extras.trades):
+        _build_trade(installation, entry, None, order, state)
+
+
+def _build_trade(
+    installation: Installation,
+    entry: _TradeEntry,
+    parent: Trade | None,
+    order: int,
+    state: _ImportState,
+) -> None:
+    trade = Trade(
+        name=entry.name,
+        number=entry.number,
+        comment=entry.comment,
+        description=entry.description,
+        completion_status=entry.completion_status,
+        context=entry.context,
+        order=order,
+        parent=parent,
+    )
+    installation.trades.append(trade)
+    for dev_order, device_id in enumerate(entry.device_ids):
+        device = state.device_by_identifier.get(device_id)
+        if device is not None:
+            trade.devices.append(TradeDevice(device=device, order=dev_order))
+    for child_order, child in enumerate(entry.children):
+        _build_trade(installation, child, trade, child_order, state)
 
 
 def _dpt(dpt: DPTType | None) -> str | None:
@@ -694,6 +1242,7 @@ class _ImportState:
         self.com_objects: list[tuple[ComObjectInstanceRef, ComObject]] = []
         self.group_addresses: dict[str, GroupAddress] = {}
         self.device_by_ia: dict[str, Device] = {}
+        self.device_by_identifier: dict[str, Device] = {}
         # Per-device BinaryData / module Arguments captured from the raw project XML.
         self.extras: _RawExtras = extras or _RawExtras()
 
@@ -703,5 +1252,8 @@ class _ImportState:
     def register_group_address(self, identifier: str, row: GroupAddress) -> None:
         self.group_addresses[identifier] = row
 
-    def register_device(self, individual_address: str, row: Device) -> None:
+    def register_device(
+        self, individual_address: str, identifier: str, row: Device
+    ) -> None:
         self.device_by_ia[individual_address] = row
+        self.device_by_identifier[identifier] = row
