@@ -24,6 +24,7 @@ from xknxeditor.proj.core.addressing import (
     parse_ia,
     ranges_for,
 )
+from xknxeditor.proj.core.dpt import normalize_datapoint_type
 from xknxeditor.proj.core.event_store import EventStore, HistoryEntry
 from xknxeditor.proj.core.events import (
     COM_OBJECT_FLAGS,
@@ -453,16 +454,36 @@ class ProjectService:
         group_address_id: int,
         *,
         sending: bool = False,
+        derive_datapoint_type: str | None = None,
     ) -> int:
         """Attach a com-object to a group address; ``sending`` makes it the transmitting link. Use
-        :meth:`set_com_object_sending` to move the sender among a com-object's links."""
+        :meth:`set_com_object_sending` to move the sender among a com-object's links.
+
+        When ``derive_datapoint_type`` is given, the link and the resulting group-address
+        datapoint type are recorded as one undo step, mirroring how ETS types a group address
+        from the object it is linked to."""
         state = self._state(project_id)
         event = LinkComObject(
             com_object_id=com_object_id,
             group_address_id=group_address_id,
             is_sending=sending,
         )
-        state.store.append(event)
+        if derive_datapoint_type:
+            state.store.append(
+                CompositeEvent(
+                    events=[
+                        event,
+                        SetGroupAddressDatapointType(
+                            group_address_id=group_address_id,
+                            datapoint_type=normalize_datapoint_type(
+                                derive_datapoint_type
+                            ),
+                        ),
+                    ]
+                )
+            )
+        else:
+            state.store.append(event)
         assert event.link_id is not None
         return event.link_id
 
@@ -485,9 +506,15 @@ class ProjectService:
     def set_group_address_datapoint_type(
         self, project_id: str, group_address_id: int, datapoint_type: str | None
     ) -> None:
+        """Set (or clear with ``None``) a group address' datapoint type.
+
+        The value is normalized to ETS token form (``DPST-1-1`` / ``DPT-5``); a value
+        that cannot be parsed raises :class:`ValueError` rather than being stored, so a
+        dotted ``1.001`` never reaches the exported archive (ETS fails to open it)."""
         self._state(project_id).store.append(
             SetGroupAddressDatapointType(
-                group_address_id=group_address_id, datapoint_type=datapoint_type
+                group_address_id=group_address_id,
+                datapoint_type=normalize_datapoint_type(datapoint_type),
             )
         )
 

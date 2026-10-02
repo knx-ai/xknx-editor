@@ -274,6 +274,23 @@ def test_link_com_object(tmp_path: Path):
     assert link is not None
 
 
+def test_link_derives_datapoint_type_as_single_undo(tmp_path: Path):
+    # ETS types a group address from the object linked to it; the link and that typing undo together.
+    svc, pid = _new(tmp_path)
+    seg = _backbone_segment(svc, pid)
+    svc.add_device(
+        pid, seg, PRODUCT, address=1, name="D", com_objects=[("O-1_R-1", None)]
+    )
+    ga = svc.create_group_address(pid, 0, 1, "GA")
+    co = svc.devices(pid)[0].com_objects[0]
+    svc.link_com_object(pid, co.id, ga, derive_datapoint_type="1.001")
+    assert svc.group_address(pid, ga).datapoint_type == "DPST-1-1"
+
+    svc.undo(pid)  # one step reverts both the link and the derived type
+    assert svc.com_object_links(pid, co.id) == []
+    assert svc.group_address(pid, ga).datapoint_type is None
+
+
 def test_link_sending_first_then_reassign(tmp_path: Path):
     svc, pid = _new(tmp_path)
     seg = _backbone_segment(svc, pid)

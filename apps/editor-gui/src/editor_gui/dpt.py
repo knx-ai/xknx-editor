@@ -12,13 +12,27 @@ class DPT:
     minor: int
     name: str
     label: str
+    has_subtype: bool = True
 
     @property
     def code(self) -> str:
         return f"{self.major}.{self.minor:03d}"
 
+    @property
+    def token(self) -> str | None:
+        """ETS token form (``DPST-1-1`` / ``DPT-5``), or ``None`` for an unknown type.
 
-DPT_UNKNOWN = DPT(0, 0, "Unknown", "?")
+        A specified sub-type is always kept (so ``16.000`` yields ``DPST-16-0``, not
+        ``DPT-16``); only a main-only type collapses to ``DPT-<major>``.
+        """
+        if not self.major:
+            return None
+        if self.has_subtype:
+            return f"DPST-{self.major}-{self.minor}"
+        return f"DPT-{self.major}"
+
+
+DPT_UNKNOWN = DPT(0, 0, "Unknown", "?", has_subtype=False)
 
 
 @lru_cache(maxsize=512)
@@ -26,6 +40,18 @@ def lookup_or_make_dpt(code: str | None) -> DPT:
     if not code:
         return DPT_UNKNOWN
     parts = code.split(".")
+    if len(parts) == 1:
+        # Bare "major" -> a main-only type (no sub-number specified).
+        try:
+            major = int(parts[0])
+        except ValueError:
+            return DPT_UNKNOWN
+        xknx_dpt = DPTBase.parse_transcoder(f"DPT-{major}")
+        if xknx_dpt is not None:
+            name = (xknx_dpt.value_type or "").replace("_", " ").title()
+            label = xknx_dpt.unit or xknx_dpt.value_type or f"DPT-{major}"
+            return DPT(major, 0, name, label, has_subtype=False)
+        return DPT(major, 0, f"DPT {major}", f"DPT-{major}", has_subtype=False)
     if len(parts) != 2:
         return DPT_UNKNOWN
     try:
@@ -34,13 +60,13 @@ def lookup_or_make_dpt(code: str | None) -> DPT:
     except ValueError:
         return DPT_UNKNOWN
 
-    xknx_dpt = DPTBase.parse_transcoder(code)
+    xknx_dpt = DPTBase.parse_transcoder(f"{major}.{minor}")
     if xknx_dpt is not None:
         name = (xknx_dpt.value_type or "").replace("_", " ").title()
-        label = xknx_dpt.unit or xknx_dpt.value_type or code
+        label = xknx_dpt.unit or xknx_dpt.value_type or f"{major}.{minor:03d}"
         return DPT(major, minor, name, label)
 
-    return DPT(major, minor, f"DPT {major}.{minor:03d}", code)
+    return DPT(major, minor, f"DPT {major}.{minor:03d}", f"{major}.{minor:03d}")
 
 
 @lru_cache(maxsize=512)

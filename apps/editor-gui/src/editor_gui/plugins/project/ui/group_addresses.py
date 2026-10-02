@@ -69,6 +69,7 @@ class GroupAddressesPanel:
         self._popup_address: str = ""
         self._popup_name: str = ""
         self._popup_dpt: str = ""
+        self._popup_dpt_error: str = ""
         self._open_new_ga = False
         self._open_rename_ga = False
         self._open_set_dpt = False
@@ -236,6 +237,7 @@ class GroupAddressesPanel:
         if imgui.menu_item(S.GA_SET_DPT, "", False)[0]:
             self._popup_ga_id = ga.id  # type: ignore[attr-defined]
             self._popup_dpt = ga.datapoint_type or ""  # type: ignore[attr-defined]
+            self._popup_dpt_error = ""
             self._open_set_dpt = True
         if imgui.menu_item(S.CONTEXT_COPY_ADDRESS, "", False)[0]:
             imgui.set_clipboard_text(getattr(ga, "text", "") or "")
@@ -403,12 +405,20 @@ class GroupAddressesPanel:
         _, self._popup_dpt = imgui.input_text_with_hint(
             "##ga_dpt", "DPST-1-1", self._popup_dpt
         )
+        if self._popup_dpt_error:
+            imgui.text_colored(imgui.ImVec4(0.9, 0.3, 0.3, 1.0), self._popup_dpt_error)
         btn_w = imgui.ImVec2(120, 0)
         if imgui.button(S.BTN_OK, btn_w):
-            self._on_set_ga_dpt(self._popup_ga_id, self._popup_dpt.strip())
-            imgui.close_current_popup()
+            try:
+                self._on_set_ga_dpt(self._popup_ga_id, self._popup_dpt.strip())
+            except ValueError as e:
+                self._popup_dpt_error = str(e)
+            else:
+                self._popup_dpt_error = ""
+                imgui.close_current_popup()
         imgui.same_line()
         if imgui.button(S.BTN_CANCEL, btn_w):
+            self._popup_dpt_error = ""
             imgui.close_current_popup()
         imgui.end_popup()
 

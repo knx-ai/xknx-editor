@@ -85,7 +85,17 @@ class TestComObjectRefRefNodeBasic:
         )
         co = node.eval(EvalContext(GlobalState()))[0]
         assert isinstance(co, UiComObject)
-        assert co.dpt_codes == ("1.0", "1.1")
+        # Main-only "DPT-1" stays a bare "1"; a sub-type keeps its dotted form.
+        assert co.dpt_codes == ("1", "1.1")
+
+    def test_dpt_codes_keep_zero_subtype_distinct(self):
+        node = ComObjectRefRefNode(
+            _ELEM, _cor(), _co(datapoint_type=["DPT-16", "DPST-16-0"])
+        )
+        co = node.eval(EvalContext(GlobalState()))[0]
+        assert isinstance(co, UiComObject)
+        # "DPST-16-0" (sub-type zero) must not collapse onto main-only "DPT-16".
+        assert co.dpt_codes == ("16", "16.0")
 
     def test_dpt_codes_ref_overrides_base(self):
         node = ComObjectRefRefNode(
@@ -93,7 +103,7 @@ class TestComObjectRefRefNodeBasic:
         )
         co = node.eval(EvalContext(GlobalState()))[0]
         assert isinstance(co, UiComObject)
-        assert co.dpt_codes == ("5.0",)
+        assert co.dpt_codes == ("5",)
 
 
 class TestFlags:

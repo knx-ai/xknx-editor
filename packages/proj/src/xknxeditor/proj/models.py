@@ -50,6 +50,14 @@ class Project(Base):
     # loadable project again: the signed knx_master.xml, the project's ".validation" file and its
     # "<pid>.certificate". Empty when the source project had none (e.g. a freshly created one).
     knx_master_xml: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    # The imported archive's manufacturer product data (``M-XXXX/*`` and ``M-XXXX.signature``
+    # members), stored as a ZIP blob exactly as the source carried it. ETS re-issues product ids on
+    # import, so resolving them through the catalog on export misses most folders; re-emitting these
+    # original members keeps a re-exported ETS-imported project importable. ``None`` when the project
+    # was not imported from a ``.knxproj`` (e.g. created from scratch) or carried no manufacturer data.
+    imported_product_members: Mapped[bytes | None] = mapped_column(
+        LargeBinary, nullable=True
+    )
     knx_validation: Mapped[str] = mapped_column(Text, nullable=False, default="")
     knx_certificate: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # The project id (P-XXXX) in the source .knxproj. The certificate/.validation are bound to it,

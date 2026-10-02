@@ -102,3 +102,34 @@ def test_reopen_stamps_user_version(tmp_path: Path) -> None:
     finally:
         con.close()
     assert version == SCHEMA_VERSION
+
+
+def test_reopen_up_to_date_db_takes_no_write_lock(tmp_path: Path) -> None:
+    """An already-current open must stay read-only: no ALTER and no ``user_version`` stamp.
+
+    The export path opens a second engine on the live working-copy file while the UI reads it per
+    frame; a bare ``PRAGMA user_version`` write there escalated to an EXCLUSIVE lock and raised
+    ``database is locked`` out of the render loop. The first open stamps the version, the second must
+    not write at all."""
+    from sqlalchemy import event
+
+    path = tmp_path / "proj.xknx"
+    svc = ProjectService()
+    svc.close(svc.create(path))
+
+    engine = make_engine(url_for(path))
+    writes: list[str] = []
+
+    @event.listens_for(engine, "after_cursor_execute")
+    def _record(  # pyright: ignore[reportUnusedFunction]
+        _c: object, _cur: object, statement: str, _p: object, _ctx: object, _many: bool
+    ) -> None:
+        normalized = " ".join(statement.strip().upper().split())
+        if normalized.startswith("ALTER") or "USER_VERSION =" in normalized:
+            writes.append(statement.strip())
+
+    from xknxeditor.proj.db import _migrate
+
+    _migrate(engine)
+    engine.dispose()
+    assert writes == []

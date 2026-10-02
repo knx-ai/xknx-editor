@@ -14,6 +14,7 @@ type change, data backfill) needs an explicit numbered step keyed off ``PRAGMA u
 
 import contextlib
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -25,6 +26,8 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.schema import Column
 
 from xknxeditor.proj.models import Base
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectStorageError(RuntimeError):
@@ -150,9 +153,19 @@ def _column_ddl(column: Column[Any], dialect: Any) -> str:
 
 
 def _migrate(engine: Engine) -> None:
-    """Additively add any mapped column missing from a pre-existing table, then stamp the version."""
+    """Additively add any mapped column missing from a pre-existing table, then stamp the version.
+
+    Opening a project must not take a write lock when nothing has to change. A bare
+    ``PRAGMA user_version`` write escalates to an EXCLUSIVE lock on the database header, and the
+    export path opens a second engine on the *live* working-copy file while the UI reads it every
+    frame -- an unconditional stamp there raised ``database is locked`` straight out of the render
+    loop (no ``busy_timeout``, so a contending read fails instead of waiting). So the version is
+    stamped only when a column was actually added or the stored version differs; an already-current
+    database stays read-only and never contends with concurrent readers.
+    """
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
+    added: list[str] = []
     with engine.begin() as conn:
         for table in Base.metadata.sorted_tables:
             if table.name not in tables:
@@ -167,7 +180,16 @@ def _migrate(engine: Engine) -> None:
                         f"ADD COLUMN {_column_ddl(column, engine.dialect)}"
                     )
                 )
-        conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
+                added.append(f"{table.name}.{column.name}")
+        current = conn.execute(text("PRAGMA user_version")).scalar()
+        if added or current != SCHEMA_VERSION:
+            conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
+            logger.debug(
+                "migrated project db (write lock taken): added=%s user_version=%s->%s",
+                added or "none",
+                current,
+                SCHEMA_VERSION,
+            )
 
 
 class _FrameDbProfiler:

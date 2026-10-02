@@ -52,6 +52,7 @@ round-trip merges or drops:
 from __future__ import annotations
 
 import datetime
+import io
 import json
 import logging
 import re
@@ -67,6 +68,7 @@ from sqlalchemy.orm import Session
 
 from xknxeditor.proj.core import import_notes
 from xknxeditor.proj.core._dll_signer import sign_member_map
+from xknxeditor.proj.core.dpt import normalize_datapoint_type
 from xknxeditor.proj.core.import_notes import ImportLoss
 from xknxeditor.proj.core.knxproj_signing import (
     SignatureAudit,
@@ -75,9 +77,14 @@ from xknxeditor.proj.core.knxproj_signing import (
 )
 from xknxeditor.proj.db import make_engine, url_for
 from xknxeditor.proj.models import (
+    Area,
+    ComObjectLink,
     Device,
+    Function,
+    GroupAddress,
     GroupRange,
     Installation,
+    Line,
     Project,
     Space,
     Trade,
@@ -152,12 +159,36 @@ class ExportResult:
     surface both to the user. Both empty on a normal, self-contained export. ``import_notes``: the
     lossy-import notes carried on the project (see core.import_notes), echoed so the caller can
     remind the user what a round-trip already merged or dropped. Empty for a lossless import.
+
+    The remaining fields describe the archive just written, for a success summary: ``file_size``
+    (bytes on disk), ``device_count``/``building_count``/``group_address_count`` (project contents),
+    ``manufacturer_count`` (``M-`` folders bundled), ``signed`` (the project folder carries a
+    signature; always true for a successful export) and ``certificate`` (a MyKnx project certificate
+    was embedded). ``project_name`` is the exported ProjectInformation name and ``master_version``
+    the KNX master-data version written. ``area_count``/``line_count`` describe the topology,
+    ``com_object_link_count`` the group-object links written, ``floor_count``/``room_count`` the
+    location spaces below buildings, and ``function_count`` the building functions.
     """
 
     schema: str
     unverifiable_folders: list[str] = field(default_factory=list[str])
     missing_references: list[str] = field(default_factory=list[str])
     import_notes: list[ImportLoss] = field(default_factory=list[ImportLoss])
+    file_size: int = 0
+    device_count: int = 0
+    building_count: int = 0
+    group_address_count: int = 0
+    manufacturer_count: int = 0
+    signed: bool = False
+    certificate: bool = False
+    project_name: str = ""
+    master_version: int = 0
+    area_count: int = 0
+    line_count: int = 0
+    com_object_link_count: int = 0
+    floor_count: int = 0
+    room_count: int = 0
+    function_count: int = 0
 
     def __str__(
         self,
@@ -257,6 +288,239 @@ def _check_master(master: bytes, source: str, ns: str) -> bytes:
     return master
 
 
+def _unzip_members(blob: bytes | None) -> dict[str, bytes]:
+    """Unpack the stored manufacturer-provenance ZIP blob into ``{path: bytes}`` (empty if none)."""
+    if not blob:
+        return {}
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        return {name: zf.read(name) for name in zf.namelist()}
+
+
+def _provenance_schema(
+    master: bytes | None, members: Mapping[str, bytes]
+) -> str | None:
+    """The ``project/<NN>`` schema of stored provenance, from its master or a Hardware.xml."""
+    if master is not None:
+        detected = _schema_from_knx_xml(master)
+        if detected is not None:
+            return detected
+    for name, data in members.items():
+        if name.endswith("/Hardware.xml"):
+            detected = _schema_from_knx_xml(data)
+            if detected is not None:
+                return detected
+    return None
+
+
+_LEGACY_SCHEMA_MAX = (
+    14  # project/10..14 are the ETS3/4-era family converted up on export
+)
+
+_PARAM_TYPE_SELF_CLOSED = re.compile(rb"(<ParameterType\b[^>]*?)/>")
+_PARAM_TYPE_EMPTY_PAIR = re.compile(rb"(<ParameterType\b[^>]*?>)</ParameterType>")
+
+
+def _restamp_tool_identity(data: bytes, schema: str) -> bytes:
+    """Rewrite an existing, non-target ``CreatedBy``/``ToolVersion`` on the root to the released pair.
+
+    ETS refuses an archive whose manufacturer XML names an unreleased tool identity
+    (``CreatedBy="MT"``). Only an existing root attribute is rewritten — a member without one is
+    left untouched (adding it would break byte-identity for clean members)."""
+    created_by, tool_version = _SCHEMA_TOOLS[schema]
+    match = re.search(rb"<KNX\b[^>]*>", data)
+    if match is None:
+        return data
+    tag = match.group(0)
+    current = re.search(rb'CreatedBy="([^"]*)"', tag)
+    if current is None:
+        return data
+    version = re.search(rb'ToolVersion="([^"]*)"', tag)
+    if current.group(1) == created_by.encode() and (
+        version is None or version.group(1) == tool_version.encode()
+    ):
+        return data
+    new_tag = tag.replace(current.group(0), b'CreatedBy="' + created_by.encode() + b'"')
+    if version is not None:
+        new_tag = new_tag.replace(
+            version.group(0), b'ToolVersion="' + tool_version.encode() + b'"'
+        )
+    return data[: match.start()] + new_tag + data[match.end() :]
+
+
+def _fill_empty_parameter_types(data: bytes) -> bytes:
+    """Give every childless ``<ParameterType/>`` an explicit ``<TypeNone/>`` child.
+
+    ETS dereferences a parameter type's child and aborts the import with a NullReferenceException
+    when it has none. Types that already carry a child are left untouched."""
+    data = _PARAM_TYPE_SELF_CLOSED.sub(rb"\1><TypeNone/></ParameterType>", data)
+    return _PARAM_TYPE_EMPTY_PAIR.sub(rb"\1<TypeNone/></ParameterType>", data)
+
+
+def _heal_manufacturer_member(data: bytes, schema: str) -> bytes:
+    """Heal one manufacturer XML member for the target schema: convert a legacy namespace up,
+    restamp an unreleased tool identity, and fill childless parameter types. A strict no-op on a
+    clean member already at the target schema."""
+    detected = _schema_from_knx_xml(data)
+    if (
+        detected is not None
+        and detected != schema
+        and int(detected) <= _LEGACY_SCHEMA_MAX
+    ):
+        data = data.replace(
+            f'xmlns="http://knx.org/xml/project/{detected}"'.encode(),
+            f'xmlns="http://knx.org/xml/project/{schema}"'.encode(),
+        )
+    data = _restamp_tool_identity(data, schema)
+    return _fill_empty_parameter_types(data)
+
+
+def _check_extra_schema(extra_files: Mapping[str, bytes], schema: str) -> None:
+    """Reject a modern-family schema mismatch in the bundled manufacturer data.
+
+    Legacy (project/10..14) members are converted up on export; a modern mismatch (e.g. project/20
+    data in a project/23 export) is a hard error — the importer rejects the whole archive as
+    'Invalid import data' when its XMLs disagree on schema."""
+    for name, data in extra_files.items():
+        if not name.endswith("/Hardware.xml"):
+            continue
+        detected = _schema_from_knx_xml(data)
+        if (
+            detected is None
+            or detected == schema
+            or int(detected) <= _LEGACY_SCHEMA_MAX
+        ):
+            continue
+        raise ValueError(
+            f"cannot export as project/{schema}: bundled manufacturer data uses "
+            f"project/{detected}. All device product data must match the project schema — "
+            "import ETS6-era .knxprod for a native project/23 export."
+        )
+
+
+def _heal_extra_files(
+    extra_files: Mapping[str, bytes], schema: str
+) -> dict[str, bytes]:
+    """Return the bundled members with every ``M-XXXX/*.xml`` healed for the target schema. Other
+    members (e.g. ``M-XXXX.signature``) pass through verbatim; stale ones are recomputed by the
+    signature audit after assembly."""
+    healed: dict[str, bytes] = {}
+    for name, data in extra_files.items():
+        if name.endswith(".xml") and name.split("/", 1)[0].startswith("M-"):
+            healed[name] = _heal_manufacturer_member(data, schema)
+        else:
+            healed[name] = data
+    return healed
+
+
+def _stored_provenance_sources(
+    project: Project, schema: str, master_xml: bytes | None
+) -> tuple[dict[str, bytes], bytes | None, str]:
+    """Decide whether to re-emit the project's stored import provenance, and at which schema.
+
+    Returns ``(members, master, schema)``. The provenance (manufacturer M-folders + knx_master.xml
+    captured on import) is re-emitted when its schema matches the request, or when the request is the
+    default and the provenance is a higher modern schema that cannot be converted down — the export
+    then realigns up to it. Otherwise the provenance is dropped and only the supplied master is used.
+    The realignment is up-only: an explicit higher request is honoured and lower provenance dropped
+    rather than silently downgrading the export's schema."""
+    stored_members = _unzip_members(project.imported_product_members)
+    stored_master = project.knx_master_xml
+    if not stored_members and stored_master is None:
+        return {}, master_xml, schema
+    prov = _provenance_schema(stored_master, stored_members)
+    use = prov is not None and (
+        prov == schema
+        or (
+            schema == DEFAULT_SCHEMA
+            and prov in _SCHEMA_TOOLS
+            and int(prov) > int(schema)
+        )
+    )
+    if use:
+        assert prov is not None
+        return stored_members, stored_master, prov
+    return {}, master_xml, schema
+
+
+def _resolve_export_sources(
+    project: Project,
+    schema: str,
+    extra_files: Mapping[str, bytes] | None,
+    master_xml: bytes | None,
+    master_source: Path | str | None,
+    fetch_master: bool,
+) -> tuple[str, str, dict[str, bytes], bytes | None]:
+    """Resolve the schema, namespace, manufacturer members and master XML the archive is built from.
+
+    Caller-supplied ``extra_files`` win; without them the project's stored import provenance is
+    re-emitted (:func:`_stored_provenance_sources`). The whole ``.knxproj`` must use ONE schema, so
+    the project files are aligned to the resolved master's schema, an unusable supplied master is
+    substituted by the fetched one when ``fetch_master`` is set, and legacy manufacturer members are
+    converted up while a modern-family mismatch stays a hard error."""
+    if extra_files:
+        effective_extra: dict[str, bytes] = dict(extra_files)
+        effective_master = master_xml
+    else:
+        effective_extra, effective_master, schema = _stored_provenance_sources(
+            project, schema, master_xml
+        )
+
+    if effective_master is None and (fetch_master or master_source is not None):
+        try:
+            if fetch_master:
+                effective_master = fetch_master_xml(master_source, schema=schema)
+            else:
+                assert master_source is not None  # implied by the branch condition
+                effective_master = read_master_xml(master_source, schema)
+        except Exception as exc:
+            logger.warning(
+                "no signed master data available (%s); using generated unsigned master",
+                exc,
+            )
+
+    # Align the export schema UP to the resolved master's schema first (the whole archive must use
+    # one schema). Only after that do we judge whether the master is usable for that schema.
+    if effective_master is not None:
+        detected = _schema_from_knx_xml(effective_master)
+        if detected is not None and detected != schema:
+            if detected in _SCHEMA_TOOLS:
+                logger.warning(
+                    "aligning export schema %s -> %s to match master data",
+                    schema,
+                    detected,
+                )
+                schema = detected
+            else:
+                logger.warning(
+                    "master uses unsupported schema %s; keeping %s (import may fail)",
+                    detected,
+                    schema,
+                )
+
+    # A supplied/merged master that does not verify for the (aligned) schema — wrong namespace that
+    # cannot be aligned, or a blanked signature — would make the import fail; replace it with the
+    # canonical signed one when fetching is allowed.
+    if effective_master is not None and fetch_master:
+        try:
+            _check_master(effective_master, "bundled master", _ns_for(schema))
+        except (ValueError, ET.ParseError) as exc:
+            try:
+                effective_master = fetch_master_xml(master_source, schema=schema)
+                logger.warning(
+                    "replaced unusable bundled master (%s) with the fetched one", exc
+                )
+            except Exception as fetch_exc:
+                logger.warning(
+                    "unusable bundled master (%s) and no replacement (%s); writing it as-is",
+                    exc,
+                    fetch_exc,
+                )
+
+    _check_extra_schema(effective_extra, schema)
+    effective_extra = _heal_extra_files(effective_extra, schema)
+    return schema, _ns_for(schema), effective_extra, effective_master
+
+
 def read_master_xml(knxproj: Path | str, schema: str = DEFAULT_SCHEMA) -> bytes:
     """Read ``knx_master.xml`` from a (signed) ``.knxproj`` archive for reuse.
 
@@ -344,7 +608,7 @@ def export_knxproj(
         project list). When ``None`` the project's stored name is used. Does not persist to
         the source ``.xknx``.
     """
-    ns = _ns_for(schema)
+    ns = _ns_for(schema)  # validate the requested schema early
     logger.debug(
         "export_knxproj: source=%s dest=%s schema=%s signer=%s extra_files=%d",
         source,
@@ -353,63 +617,18 @@ def export_knxproj(
         certificate_signer is not None,
         len(extra_files) if extra_files else 0,
     )
-    if master_xml is None and (fetch_master or master_source is not None):
-        try:
-            if fetch_master:
-                master_xml = fetch_master_xml(master_source, schema=schema)
-            else:
-                assert (
-                    master_source is not None
-                )  # implied by the branch condition above
-                master_xml = read_master_xml(master_source, schema)
-        except Exception as exc:
-            logger.warning(
-                "no signed master data available (%s); using generated unsigned master",
-                exc,
-            )
-    # The whole .knxproj must use ONE schema. The bundled manufacturer data and knx_master.xml come
-    # from .knxprod files at a fixed schema (often project/20); the importer rejects the import with
-    # "Unreleased tool version" when the project files use a different schema than that master.
-    # Align the project files to the supplied master's schema (the importer then converts up on
-    # import if it runs a newer schema natively, e.g. project/20 -> /23).
-    if master_xml is not None:
-        detected = _schema_from_knx_xml(master_xml)
-        if detected is not None and detected != schema:
-            if detected in _SCHEMA_TOOLS:
-                logger.warning(
-                    "aligning export schema %s -> %s to match bundled master data",
-                    schema,
-                    detected,
-                )
-                schema = detected
-                ns = _ns_for(schema)
-            else:
-                logger.warning(
-                    "bundled master uses unsupported schema %s; keeping %s (import may fail)",
-                    detected,
-                    schema,
-                )
-    # The bundled manufacturer data (M-XXXX trees) must use the SAME schema as the project files,
-    # or the importer rejects the whole import with "Invalid import data". Fail fast on a mismatch —
-    # e.g. a project/23 export with project/20 catalog product data (a native project/23 export
-    # needs project/23-era .knxprod), or a catalog that mixes project/20 and project/23 manufacturers.
-    if extra_files:
-        mfr_schemas = {
-            _schema_from_knx_xml(data)
-            for name, data in extra_files.items()
-            if name.endswith("/Hardware.xml")
-        }
-        mismatch = sorted(s for s in mfr_schemas if s is not None and s != schema)
-        if mismatch:
-            raise ValueError(
-                f"cannot export as project/{schema}: bundled manufacturer data uses "
-                f"project/{', project/'.join(mismatch)}. All device product data must match the "
-                f"project schema — import ETS6-era .knxprod for a native project/23 export."
-            )
     engine = make_engine(url_for(Path(source)))
     import_notes_raw = ""
+    effective_extra: dict[str, bytes] = {}
     try:
-        with Session(engine) as session:
+        # autoflush=False keeps this read of the LIVE working-copy file strictly read-only. The
+        # project_name override below marks the ORM row dirty; with autoflush on, the next query
+        # would flush it as `UPDATE projects` and hold a RESERVED write lock for the whole archive
+        # build. The GUI render thread reads this same file every frame, so that lock surfaced as
+        # "database is locked" out of the render loop (no busy_timeout -> a contending read fails
+        # instead of waiting). With autoflush off the override stays in-memory (the writer still
+        # sees it) and the session never writes; it is rolled back at close as before.
+        with Session(engine, autoflush=False) as session:
             project = session.query(Project).first()
             if project is None:
                 raise ValueError(f"{source} is not a project (no project row)")
@@ -421,12 +640,36 @@ def export_knxproj(
             installation = (
                 session.query(Installation).order_by(Installation.index).first()
             )
+            # Resolve the schema, manufacturer members and master actually written: caller-supplied
+            # extra_files win, else the project's captured import provenance is re-emitted (and the
+            # schema realigned to it). Done inside the session so stored provenance can be read.
+            schema, ns, effective_extra, master_xml = _resolve_export_sources(
+                project, schema, extra_files, master_xml, master_source, fetch_master
+            )
+            # Counts for the caller's success summary, read while the session is open (one DB round
+            # trip each; no extra engine). Buildings are the top-level location spaces.
+            device_count = session.query(Device).count()
+            building_count = (
+                session.query(Space).filter(Space.space_type == "Building").count()
+            )
+            floor_count = (
+                session.query(Space).filter(Space.space_type == "Floor").count()
+            )
+            room_count = session.query(Space).filter(Space.space_type == "Room").count()
+            group_address_count = session.query(GroupAddress).count()
+            area_count = session.query(Area).count()
+            line_count = session.query(Line).count()
+            com_object_link_count = session.query(ComObjectLink).count()
+            function_count = session.query(Function).count()
+            project_name_out = project.name
             created_by, tool_version = _SCHEMA_TOOLS[schema]
-            audit, missing_refs = _Writer(ns, created_by, tool_version).write_archive(
+            audit, missing_refs, signed, certificate = _Writer(
+                ns, created_by, tool_version
+            ).write_archive(
                 Path(dest),
                 project,
                 installation,
-                extra_files,
+                effective_extra,
                 master_xml,
                 master_version,
                 certificate_signer,
@@ -459,11 +702,34 @@ def export_knxproj(
         len(audit.unverifiable),
         len(missing_refs),
     )
+    try:
+        file_size = Path(dest).stat().st_size
+    except OSError:
+        file_size = 0
+    # A bundled manufacturer is a distinct top-level ``M-`` folder in the written members.
+    manufacturer_count = len(
+        {path.split("/", 1)[0] for path in effective_extra if path.startswith("M-")}
+    )
     return ExportResult(
         schema=schema,
         unverifiable_folders=audit.unverifiable,
         missing_references=missing_refs,
         import_notes=import_notes.loads(import_notes_raw),
+        file_size=file_size,
+        device_count=device_count,
+        building_count=building_count,
+        group_address_count=group_address_count,
+        manufacturer_count=manufacturer_count,
+        signed=signed,
+        certificate=certificate,
+        project_name=project_name_out,
+        master_version=master_version,
+        area_count=area_count,
+        line_count=line_count,
+        com_object_link_count=com_object_link_count,
+        floor_count=floor_count,
+        room_count=room_count,
+        function_count=function_count,
     )
 
 
@@ -613,7 +879,7 @@ class _Writer:
         master_xml: bytes | None,
         master_version: int,
         certificate_signer: CertificateSigner | None = None,
-    ) -> tuple[SignatureAudit, list[str]]:
+    ) -> tuple[SignatureAudit, list[str], bool, bool]:
         pid = project.id
         ga_link_id, di_id = _assign_ids(pid, installation)
 
@@ -747,7 +1013,12 @@ class _Writer:
         with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
             for path, data in members.items():
                 zf.writestr(path, data)
-        return audit, missing_refs
+        return (
+            audit,
+            missing_refs,
+            f"{pid}.signature" in members,
+            certificate is not None,
+        )
 
     def _build_project_xml(
         self,
@@ -1277,6 +1548,12 @@ class _Writer:
         for child in sorted(group_range.children, key=lambda x: x.range_start):
             seq = self._build_range(gr_el, child, pid, seq, ga_link_id)
         for ga in sorted(group_range.group_addresses, key=lambda x: x.address):
+            # Heal a stored datapoint type to ETS token form; a value ETS cannot open is rejected
+            # loudly, naming the group address so the user can fix it.
+            try:
+                datapoint_type = normalize_datapoint_type(ga.datapoint_type)
+            except ValueError as exc:
+                raise ValueError(f"group address {ga.name!r}: {exc}") from exc
             self._el(
                 gr_el,
                 "GroupAddress",
@@ -1285,7 +1562,7 @@ class _Writer:
                 Name=ga.name,
                 Description=ga.description or None,
                 Comment=ga.comment or None,
-                DatapointType=ga.datapoint_type,
+                DatapointType=datapoint_type,
                 Central="true" if ga.central else None,
                 Unfiltered="true" if ga.unfiltered else None,
                 Global="true" if ga.is_global else None,

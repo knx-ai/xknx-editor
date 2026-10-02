@@ -488,3 +488,63 @@ msgstr "{name} war bereits im Katalog, nichts Neues importiert"
 
 msgid "Product catalog import"
 msgstr "Produktkatalog-Import"
+
+msgid "Export complete"
+msgstr "Export abgeschlossen"
+
+msgid "Successfully created {name}"
+msgstr "{name} erfolgreich erstellt"
+
+msgid "File size"
+msgstr "Dateigröße"
+
+msgid "Project"
+msgstr "Projekt"
+
+msgid "Format"
+msgstr "Format"
+
+msgid "Devices"
+msgstr "Geräte"
+
+msgid "Buildings"
+msgstr "Gebäude"
+
+msgid "Group addresses"
+msgstr "Gruppenadressen"
+
+msgid "Group-object links"
+msgstr "Gruppenobjekt-Verknüpfungen"
+
+msgid "Areas / lines"
+msgstr "Bereiche / Linien"
+
+msgid "Floors / rooms"
+msgstr "Etagen / Räume"
+
+msgid "Functions"
+msgstr "Funktionen"
+
+msgid "KNX master version"
+msgstr "KNX-Master-Version"
+
+msgid "Exported at"
+msgstr "Exportiert am"
+
+msgid "Manufacturer data (M folders)"
+msgstr "Herstellerdaten (M-Ordner)"
+
+msgid "Signed"
+msgstr "Signiert"
+
+msgid "Certificate"
+msgstr "Zertifikat"
+
+msgid "yes"
+msgstr "ja"
+
+msgid "no"
+msgstr "nein"
+
+msgid "Open folder"
+msgstr "Ordner öffnen"

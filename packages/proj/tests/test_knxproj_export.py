@@ -1,6 +1,7 @@
 """Round-trip test for the simple .knxproj export: build a project via the core API, export it to
 a ``.knxproj``, then re-import it (real xknxproject parse) and check topology/GAs/links survive."""
 
+import io
 import json
 import re
 import zipfile
@@ -11,6 +12,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from xknxeditor.proj import ProjectService, export_knxproj, import_knxproj
+from xknxeditor.proj.core.knxproj_signing import verify_directory_signature
 from xknxeditor.proj.db import make_engine, url_for
 from xknxeditor.proj.models import (
     Device,
@@ -19,9 +21,12 @@ from xknxeditor.proj.models import (
     GroupAddress,
     Installation,
     Line,
+    Project,
     Space,
     Trade,
 )
+
+_REAL = Path(__file__).parent / "fixtures" / "xknx_test_project_no_password.knxproj"
 
 
 def test_export_import_round_trip(tmp_path: Path) -> None:
@@ -428,6 +433,46 @@ def test_export_emits_unfiltered_and_additional_group_addresses(tmp_path: Path) 
     assert 'Address="2049"' in zero and 'Address="2050"' in zero
 
 
+def _single_project_setup(tmp_path: Path, pid_name: str) -> tuple[Path, int]:
+    """A minimal project with one group address; returns (project path, ga id)."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, pid_name)
+    svc.create_area(pid, 0, 2, "Area 1")
+    ga_id = svc.create_group_address(pid, 0, 0x0801, "GA One")  # 1/0/1
+    svc.close(pid)
+    return src, ga_id
+
+
+def test_export_heals_legacy_dotted_datapoint_type(tmp_path: Path) -> None:
+    # A project saved before DPT normalization may hold a dotted value that ETS cannot open.
+    # Export heals it to token form rather than writing the broken value.
+    src, ga_id = _single_project_setup(tmp_path, "P-HEAL")
+    with Session(make_engine(url_for(src))) as s:
+        s.get(GroupAddress, ga_id).datapoint_type = "1.001"  # type: ignore[union-attr]
+        s.commit()
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out)
+    with zipfile.ZipFile(out) as z:
+        zero = next(
+            z.read(n).decode("utf-8") for n in z.namelist() if n.endswith("/0.xml")
+        )
+    assert 'DatapointType="DPST-1-1"' in zero
+    assert 'DatapointType="1.001"' not in zero
+
+
+def test_export_fails_loudly_on_unparseable_datapoint_type(tmp_path: Path) -> None:
+    src, ga_id = _single_project_setup(tmp_path, "P-BAD")
+    with Session(make_engine(url_for(src))) as s:
+        s.get(GroupAddress, ga_id).datapoint_type = "garbage"  # type: ignore[union-attr]
+        s.commit()
+
+    out = tmp_path / "out.knxproj"
+    with pytest.raises(ValueError, match="GA One"):
+        export_knxproj(src, out)
+
+
 def test_export_bundles_extra_files_and_master(tmp_path: Path) -> None:
     src = tmp_path / "src.xknx"
     svc = ProjectService()
@@ -435,7 +480,11 @@ def test_export_bundles_extra_files_and_master(tmp_path: Path) -> None:
     svc.close(pid)
 
     out = tmp_path / "out.knxproj"
-    master = b'<?xml version="1.0"?>\n<KNX><MasterData Merged="1"/></KNX>'
+    master = (
+        b'<?xml version="1.0"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/20">'
+        b'<MasterData Merged="1" Signature="QUJD"/></KNX>'
+    )
     hardware = b"<Hardware/>"
     export_knxproj(
         src,
@@ -457,6 +506,213 @@ def test_export_bundles_extra_files_and_master(tmp_path: Path) -> None:
         # the colliding "knx_master.xml" key is ignored: only our master, written once
         assert names.count("knx_master.xml") == 1
         assert zf.read("knx_master.xml") == master
+
+
+def test_export_restamps_unreleased_tool_identity(tmp_path: Path) -> None:
+    """Bundled vendor XML with an unreleased CreatedBy/ToolVersion is restamped to the released pair
+    so ETS does not refuse the archive (NonReleasedToolVersionUsedException)."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-MT")
+    svc.close(pid)
+
+    member = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/20" CreatedBy="MT" '
+        b'ToolVersion="4.1.1207.40711"><ManufacturerData/></KNX>'
+    )
+    out = tmp_path / "out.knxproj"
+    export_knxproj(
+        src,
+        out,
+        extra_files={
+            "M-00B6/Hardware.xml": member,
+            "M-00B6.signature": b"stale",
+        },
+    )
+
+    with zipfile.ZipFile(out) as zf:
+        rewritten = zf.read("M-00B6/Hardware.xml")
+        assert b'CreatedBy="ETS5"' in rewritten
+        assert b'ToolVersion="5.7.1428.39779"' in rewritten
+        assert b'CreatedBy="MT"' not in rewritten
+        assert b"4.1.1207.40711" not in rewritten
+        # body is preserved; only the root attributes change
+        assert b"<ManufacturerData/>" in rewritten
+        # the stale shipped signature no longer matches the rewritten bytes -> recomputed
+        assert zf.read("M-00B6.signature") != b"stale"
+
+
+def test_export_fills_empty_parameter_type(tmp_path: Path) -> None:
+    """A childless <ParameterType/> in a bundled member gets an explicit <TypeNone/> child so ETS
+    does not abort the import with a NullReferenceException; types with children are untouched."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-PT")
+    svc.close(pid)
+
+    member = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Static>'
+        b"<ParameterTypes>"
+        b'<ParameterType Id="PT-Page" Name="Page_t" />'
+        b'<ParameterType Id="PT-Empty" Name="Empty_t"></ParameterType>'
+        b'<ParameterType Id="PT-Num" Name="Num_t"><TypeNumber SizeInBit="8"/></ParameterType>'
+        b"</ParameterTypes>"
+        b"</Static></ManufacturerData></KNX>"
+    )
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out, extra_files={"M-008E_A-0040/0040.xml": member})
+
+    with zipfile.ZipFile(out) as zf:
+        rewritten = zf.read("M-008E_A-0040/0040.xml")
+    # the self-closed and the empty-pair form both gained a TypeNone child
+    assert rewritten.count(b"<TypeNone/>") == 2
+    assert b'Name="Page_t" ><TypeNone/></ParameterType>' in rewritten
+    assert b'Name="Empty_t"><TypeNone/></ParameterType>' in rewritten
+    # the container and a type that already has a child are left alone
+    assert b"<ParameterTypes>" in rewritten
+    assert (
+        b'<ParameterType Id="PT-Num" Name="Num_t"><TypeNumber SizeInBit="8"/>'
+        in rewritten
+    )
+
+
+_LEGACY_HARDWARE = (
+    b'<?xml version="1.0" encoding="utf-8"?>\n'
+    b'<KNX xmlns="http://knx.org/xml/project/11" CreatedBy="MT" ToolVersion="4.1.1207.40711">'
+    b'<ManufacturerData><Manufacturer RefId="M-00B6">'
+    b'<Hardware><Hardware Id="M-00B6_H-1" Name="Dev" SerialNumber="1" VersionNumber="1"'
+    b' BusCurrent="10" HasIndividualAddress="true" HasApplicationProgram="true"'
+    b' IsPowerSupply="false" IsChoke="false">'
+    b'<Products><Product Id="M-00B6_H-1_P-1" Text="P" OrderNumber="ON-1" IsRailMounted="false"'
+    b' WidthInMillimeter="18"/></Products>'
+    b"</Hardware></Hardware></Manufacturer></ManufacturerData></KNX>"
+)
+
+
+def test_export_converts_legacy_manufacturer_schema(tmp_path: Path) -> None:
+    """A project built from ETS3/4-era .knxprod files bundles project/11 manufacturer XML. The
+    export converts those members up to the export schema so the archive's XMLs agree on one schema
+    (ETS otherwise refuses it as 'Invalid import data'), keeping the vendor ids."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-LEG")
+    svc.close(pid)
+
+    out = tmp_path / "out.knxproj"
+    # Export as project/20 with no master to align down, so the member is converted to project/20.
+    export_knxproj(
+        src,
+        out,
+        schema="20",
+        extra_files={
+            "M-00B6/Hardware.xml": _LEGACY_HARDWARE,
+            "M-00B6.signature": b"stale",
+        },
+    )
+
+    with zipfile.ZipFile(out) as zf:
+        rewritten = zf.read("M-00B6/Hardware.xml")
+    assert b'xmlns="http://knx.org/xml/project/20"' in rewritten
+    assert b"project/11" not in rewritten
+    assert b"ns1:" not in rewritten  # not merely a prefixed default namespace
+    # vendor ids survive the conversion
+    assert b'RefId="M-00B6"' in rewritten
+    assert b'OrderNumber="ON-1"' in rewritten
+    # restamped to the released tool identity (the #19 fix still runs after the conversion)
+    assert b'ToolVersion="5.7.1428.39779"' in rewritten
+    assert b"4.1.1207.40711" not in rewritten
+
+
+def test_export_still_rejects_modern_schema_mismatch(tmp_path: Path) -> None:
+    """Only legacy (project/10..14) members are auto-converted; a modern-family mismatch
+    (project/20 data in a project/23 export) stays a hard error."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-MOD")
+    svc.close(pid)
+    out = tmp_path / "out.knxproj"
+    v20_hardware = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData/></KNX>'
+    )
+    with pytest.raises(ValueError, match="project/20"):
+        export_knxproj(
+            src,
+            out,
+            schema="23",
+            extra_files={"M-0001/Hardware.xml": v20_hardware},
+        )
+
+
+def test_export_substitutes_unusable_master(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """An unusable bundled master (wrong namespace / empty signature, as a legacy multi-source merge
+    produces) is replaced by the canonical signed master instead of being written verbatim."""
+    import xknxeditor.proj.core.knxproj_export as exp
+
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-MST")
+    svc.close(pid)
+
+    # The broken master a legacy cross-source merge yields: project/11 and no MasterData signature.
+    broken_master = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/11">'
+        b'<MasterData Id="MD-1" Signature=""/></KNX>'
+    )
+    signed_master = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/20">'
+        b'<MasterData Id="MD-1" Signature="QUJD"/></KNX>'
+    )
+
+    def fake_fetch(knxproj=None, timeout=15.0, schema="20"):  # type: ignore[no-untyped-def]
+        return signed_master
+
+    monkeypatch.setattr(exp, "fetch_master_xml", fake_fetch)
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out, schema="20", master_xml=broken_master, fetch_master=True)
+
+    with zipfile.ZipFile(out) as zf:
+        written = zf.read("knx_master.xml")
+    assert written == signed_master
+    assert b"project/11" not in written
+
+
+def test_export_substitutes_malformed_master(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A malformed (not well-formed XML) bundled master is also replaced by the fetched signed one;
+    the schema-check parse error must not abort the export."""
+    import xknxeditor.proj.core.knxproj_export as exp
+
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-MST2")
+    svc.close(pid)
+
+    malformed_master = (
+        b'<?xml version="1.0"?>\n<KNX xmlns="http://knx.org/xml/project/20"><MasterData'
+    )
+    signed_master = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/20">'
+        b'<MasterData Id="MD-1" Signature="QUJD"/></KNX>'
+    )
+
+    def fake_fetch(knxproj=None, timeout=15.0, schema="20"):  # type: ignore[no-untyped-def]
+        return signed_master
+
+    monkeypatch.setattr(exp, "fetch_master_xml", fake_fetch)
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(
+        src, out, schema="20", master_xml=malformed_master, fetch_master=True
+    )
+
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("knx_master.xml") == signed_master
 
 
 def test_certificate_signer_embeds_certificate(tmp_path: Path) -> None:
@@ -759,6 +1015,124 @@ def test_export_project_name_override(tmp_path: Path) -> None:
     assert svc2.project(pid).name == "New project"
 
 
+def test_export_does_not_write_source_db(tmp_path: Path) -> None:
+    """Export must stay read-only on the live source DB.
+
+    The ``project_name`` override marks the project row dirty; a plain session would autoflush it as
+    an ``UPDATE`` on the next query -- a write lock on the file the GUI reads every frame, which
+    raised ``database is locked`` out of the render loop. With ``autoflush=False`` the override stays
+    in-memory and no write statement is issued."""
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    svc.close(svc.create(src, "P-RO"))
+
+    writes: list[str] = []
+
+    def _record(
+        _conn: object,
+        _cur: object,
+        statement: str,
+        _params: object,
+        _ctx: object,
+        _many: bool,
+    ) -> None:
+        head = statement.strip().split(None, 1)[0].upper() if statement.strip() else ""
+        if head in {"UPDATE", "INSERT", "DELETE", "ALTER", "DROP"}:
+            writes.append(statement.strip().splitlines()[0])
+
+    event.listen(Engine, "after_cursor_execute", _record)
+    try:
+        export_knxproj(src, tmp_path / "out.knxproj", project_name="Musterhaus")
+    finally:
+        event.remove(Engine, "after_cursor_execute", _record)
+
+    assert writes == [], f"export wrote to the source DB (took a write lock): {writes}"
+
+
+def test_export_summary_reports_counts_and_signing(tmp_path: Path) -> None:
+    """The ``ExportResult`` carries a summary of the archive for a success window: file size,
+    content counts (devices, topology, spaces, group addresses, links, functions), bundled
+    manufacturer folders, the project name/master version, and the signing state."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-SUM")
+    area_id = svc.create_area(pid, 0, 2, "A")
+    line_id = svc.create_line(pid, area_id, 1, "L")
+    segment = next(
+        line.segments[0].id
+        for area in svc.topology(pid, 0).areas
+        if area.id == area_id
+        for line in area.lines
+        if line.id == line_id
+    )
+    device_id = svc.add_device(
+        pid,
+        segment,
+        "M-1_H-1_P-1",
+        address=1,
+        name="D1",
+        com_objects=[("M-1_A-1_O-1_R-1", None)],
+    )
+    svc.add_device(pid, segment, "M-1_H-1_P-1", address=2, name="D2")
+    ga_id = svc.create_group_address(pid, 0, 0x0801, "GA1")
+    svc.create_group_address(pid, 0, 0x0802, "GA2")
+    svc.create_group_address(pid, 0, 0x0803, "GA3")
+    co_id = next(
+        co.id for d in svc.devices(pid) if d.id == device_id for co in d.com_objects
+    )
+    svc.link_com_object(pid, co_id, ga_id, sending=True)
+    floor_id = svc.create_space(pid, 0, "Floor", "EG")
+    room_id = svc.create_space(pid, 0, "Room", "Wohnzimmer", parent_id=floor_id)
+    svc.create_function(pid, room_id, "FT-1", "Light")
+    svc.close(pid)
+
+    out = tmp_path / "out.knxproj"
+    result = export_knxproj(
+        src,
+        out,
+        extra_files={
+            "M-0001/Hardware.xml": b"<x/>",
+            "M-0001/Catalog.xml": b"<x/>",
+            "M-0002/Hardware.xml": b"<x/>",
+        },
+    )
+
+    assert result.file_size == out.stat().st_size > 0
+    assert result.project_name == "New project"  # the seeded project name
+    assert result.master_version == 1  # export_knxproj default
+    assert result.device_count == 2
+    assert (
+        result.area_count >= 1 and result.line_count >= 1
+    )  # our area/line are counted
+    assert result.building_count == 1  # the default building seeded on create
+    assert result.floor_count == 1
+    assert result.room_count == 1
+    assert result.group_address_count == 3
+    assert result.com_object_link_count == 1  # the one sending link
+    assert result.function_count == 1
+    assert result.manufacturer_count == 2  # two distinct M- folders
+    assert result.signed is True
+    assert result.certificate is False
+
+
+def test_export_summary_marks_certificate(tmp_path: Path) -> None:
+    """``certificate`` is set when a signer embeds a MyKnx project certificate."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    svc.close(svc.create(src, "P-SUMC"))
+    cert = b'CERT KNX:"P-SUMC.certificate"\r\n\tSIGN=DEADBEEF\r\n'
+
+    result = export_knxproj(
+        src, tmp_path / "out.knxproj", certificate_signer=lambda _p, _s, _n: cert
+    )
+
+    assert result.certificate is True
+    assert result.signed is True
+
+
 def test_certificate_export_writes_validation_and_info(tmp_path: Path) -> None:
     """A certified export carries `.validation` and `{pid}.info` in the ETS byte layout."""
     src = tmp_path / "src.xknx"
@@ -808,3 +1182,138 @@ def test_uncertified_export_still_writes_info_but_no_validation(tmp_path: Path) 
         names = zf.namelist()
     assert f"{pid}.info" in names
     assert ".validation" not in names
+
+
+def _archive_members(path: Path) -> dict[str, bytes]:
+    with zipfile.ZipFile(path) as zf:
+        return {n: zf.read(n) for n in zf.namelist() if not n.endswith("/")}
+
+
+def test_import_captures_product_provenance(tmp_path: Path) -> None:
+    """Importing a real .knxproj must persist its manufacturer data: the signed ``knx_master.xml``
+    and every ``M-XXXX/*`` member (plus the ``M-XXXX.signature``), stored verbatim so they can be
+    re-emitted on export (issue #22 — ETS re-issues product ids on import, so the catalog can no
+    longer resolve them)."""
+    dest = tmp_path / "captured.xknx"
+    pid = import_knxproj(_REAL, dest)
+
+    with Session(make_engine(url_for(dest))) as session:
+        project = session.query(Project).filter(Project.id == pid).one()
+        assert project.knx_master_xml, "signed master not captured"
+        blob = project.imported_product_members
+        assert blob, "manufacturer members not captured"
+
+    source_members = _archive_members(_REAL)
+    expected = {
+        n: b for n, b in source_members.items() if n.split("/", 1)[0].startswith("M-")
+    }
+    assert expected, "fixture precondition: archive has M- members"
+    with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+        captured = {n: zf.read(n) for n in zf.namelist()}
+    assert captured == expected  # byte-identical, including the M-XXXX.signature
+
+
+def test_export_reemits_imported_manufacturer_data(tmp_path: Path) -> None:
+    """A project imported from a real .knxproj and exported again must carry its original
+    ``M-XXXX/*`` folder *contents* (byte-identical) and signed master, with no missing references —
+    the manufacturer data survives the round trip without the catalog (issue #22). The folder
+    ``.signature`` is a derived artifact: it is kept verbatim when it still verifies, otherwise
+    recomputed, so it is asserted to verify under the active signing key rather than byte-compared."""
+    captured = tmp_path / "captured.xknx"
+    import_knxproj(_REAL, captured)
+
+    out = tmp_path / "out.knxproj"
+    result = export_knxproj(captured, out)
+    assert not result.missing_references
+
+    source_members = _archive_members(_REAL)
+    out_members = _archive_members(out)
+    folder_files: dict[str, dict[str, bytes]] = {}
+    for name, data in source_members.items():
+        top = name.split("/", 1)[0]
+        if not top.startswith("M-") or "/" not in name:
+            continue
+        assert name in out_members, f"{name} dropped on export"
+        assert out_members[name] == data, f"{name} not byte-identical"
+        folder_files.setdefault(top, {})[name.split("/", 1)[1]] = out_members[name]
+
+    for folder, files in folder_files.items():
+        sig = f"{folder}.signature"
+        assert sig in out_members, f"{sig} missing"
+        assert verify_directory_signature(files, out_members[sig]), (
+            f"{sig} does not verify under the active signing key"
+        )
+
+
+def test_export_without_import_provenance_has_no_members(tmp_path: Path) -> None:
+    """A project built from scratch (never imported) stores no provenance, so the stored-members
+    path is a no-op and must not fabricate manufacturer folders."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-SCRATCH")
+    svc.close(pid)
+
+    with Session(make_engine(url_for(src))) as session:
+        project = session.query(Project).filter(Project.id == pid).one()
+        assert project.imported_product_members is None
+
+    out = tmp_path / "out.knxproj"
+    export_knxproj(src, out)
+    members = _archive_members(out)
+    assert not any(n.split("/", 1)[0].startswith("M-") for n in members)
+
+
+def test_import_provenance_realigns_modern_schema(tmp_path: Path) -> None:
+    """Modern-family (project/23) provenance cannot be converted down, so exporting it with the
+    default project/20 realigns the whole export up to project/23 and carries the stored member.
+    A deliberate legacy downgrade (project/14) still honours the target and drops it (issue #22)."""
+    src = tmp_path / "src.xknx"
+    svc = ProjectService()
+    pid = svc.create(src, "P-MODERN")
+    svc.close(pid)
+
+    master23 = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/23">'
+        b'<MasterData Signature="AA=="/></KNX>'
+    )
+    hardware23 = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b'<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData/></KNX>'
+    )
+    blob = io.BytesIO()
+    with zipfile.ZipFile(blob, "w") as zf:
+        zf.writestr("M-0001/Hardware.xml", hardware23)
+    with Session(make_engine(url_for(src))) as session:
+        project = session.query(Project).filter(Project.id == pid).one()
+        project.knx_master_xml = master23
+        project.imported_product_members = blob.getvalue()
+        session.commit()
+
+    out = tmp_path / "out.knxproj"
+    result = export_knxproj(src, out)
+    assert result.schema == "23"
+    members = _archive_members(out)
+    assert members.get("M-0001/Hardware.xml") == hardware23
+
+    out14 = tmp_path / "out14.knxproj"
+    result14 = export_knxproj(src, out14, schema="14")
+    assert result14.schema == "14"
+    members14 = _archive_members(out14)
+    assert not any(n.split("/", 1)[0].startswith("M-") for n in members14)
+
+
+def test_import_provenance_does_not_downgrade_explicit_higher_schema(
+    tmp_path: Path,
+) -> None:
+    """The realignment is up only: a project/20 import exported with an explicit project/23 request
+    stays project/23 (honouring the request) and drops the lower-schema provenance rather than
+    silently downgrading the export to project/20 (issue #22, Codex P1)."""
+    captured = tmp_path / "captured.xknx"
+    import_knxproj(_REAL, captured)  # the fixture is a project/20 archive
+
+    out = tmp_path / "out23.knxproj"
+    result = export_knxproj(captured, out, schema="23")
+    assert result.schema == "23"
+    members = _archive_members(out)
+    assert not any(n.split("/", 1)[0].startswith("M-") for n in members)

@@ -20,7 +20,9 @@ a large installation, and it preserves the original group-range names.
 from __future__ import annotations
 
 import base64
+import io
 import logging
+import zipfile
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -120,6 +122,9 @@ def import_knxproj(
     ``.knxproj`` archive. An existing ``dest`` is overwritten (an import is a fresh project).
     """
     parser, extras = _parse_checked(source, password, language)
+    # Capture the archive's own product data (signed master + manufacturer members) so a later export
+    # can re-emit it verbatim; ETS re-issues product ids on import, so the catalog cannot resolve them.
+    master_xml, product_members = _capture_product_provenance(source)
     # Project IDs are "P-" + 4 hex digits (spec Project Scheme §4.2.3, e.g. "P-02D7"); a longer
     # id yields a non-conformant P-XXXXXXXX folder that the importer can refuse to import.
     pid = project_id or f"P-{uuid4().hex[:4].upper()}"
@@ -139,7 +144,14 @@ def import_knxproj(
     engine = make_engine(url_for(dest_path))
     try:
         with Session(engine) as session:
-            _build(session, parser, pid, extras)
+            _build(
+                session,
+                parser,
+                pid,
+                extras,
+                knx_master_xml=master_xml,
+                product_members=product_members,
+            )
             session.commit()
     finally:
         engine.dispose()
@@ -162,6 +174,45 @@ def _parse_checked(
         if password is not None:
             raise InvalidPasswordException("Invalid password.") from e
         raise UnexpectedFileContent(f"Not a readable .knxproj archive: {e}") from e
+
+
+def _capture_product_provenance(
+    source: Path | str,
+) -> tuple[bytes | None, bytes | None]:
+    """Capture the imported archive's verbatim product data for a byte-faithful re-export.
+
+    Returns ``(knx_master_xml, product_members)``: the archive's signed ``knx_master.xml`` and a ZIP
+    of its manufacturer members (``M-XXXX/*`` and ``M-XXXX.signature``), both exactly as the source
+    carried them. ETS re-issues product ids on import, so resolving them through the catalog on export
+    misses most folders; only these original members keep a re-exported project importable. The
+    manufacturer data is never password protected, so it reads without the project password.
+    Best-effort: returns ``None`` for either part on a read failure (the export then falls back to the
+    catalog bundle / fetched master).
+    """
+    try:
+        with zipfile.ZipFile(source) as zf:
+            names = zf.namelist()
+            master = zf.read("knx_master.xml") if "knx_master.xml" in names else None
+            members = [
+                (name, zf.read(name))
+                for name in names
+                if not name.endswith("/") and name.split("/", 1)[0].startswith("M-")
+            ]
+    except (OSError, zipfile.BadZipFile, RuntimeError, zlib.error) as exc:
+        logger.warning("could not capture product data from %s (%s)", source, exc)
+        return None, None
+    if not members:
+        return master, None
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as out:
+        for name, data in members:
+            out.writestr(name, data)
+    logger.debug(
+        "captured product data: master=%s members=%d",
+        "yes" if master else "no",
+        len(members),
+    )
+    return master, buffer.getvalue()
 
 
 @dataclass(frozen=True, slots=True)
@@ -828,7 +879,15 @@ def _localname(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _build(session: Session, parser: XMLParser, pid: str, extras: _RawExtras) -> None:
+def _build(
+    session: Session,
+    parser: XMLParser,
+    pid: str,
+    extras: _RawExtras,
+    *,
+    knx_master_xml: bytes | None = None,
+    product_members: bytes | None = None,
+) -> None:
     # Raw parser inventory at INFO (not DEBUG) so a default remote log shows what xknxproject
     # handed us. parser.devices is the flat concatenation of every line's devices across all areas
     # (topology-derived: it excludes <UnassignedDevices> and any device xknxproject itself dropped,
@@ -855,6 +914,8 @@ def _build(session: Session, parser: XMLParser, pid: str, extras: _RawExtras) ->
         schema_version=info.schema_version,
         tool_version=info.tool_version,
         comment=extras.project_comment,
+        knx_master_xml=knx_master_xml,
+        imported_product_members=product_members,
         traces=[
             ProjectTrace(
                 project_id=pid,

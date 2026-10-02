@@ -766,7 +766,10 @@ class ProjectPlugin:
         """The GA datapoint-type token for a com-object's DPT (``DPST-x-y`` / ``DPT-x``)."""
         if dpt is None or not dpt.major:
             return None
-        return f"DPST-{dpt.major}-{dpt.minor}" if dpt.minor else f"DPT-{dpt.major}"
+        # Honor an explicit sub-type (so 16.000 stays DPST-16-0); fall back to the
+        # sub-number for fakes that predate the has_subtype flag.
+        has_subtype = getattr(dpt, "has_subtype", bool(dpt.minor))
+        return f"DPST-{dpt.major}-{dpt.minor}" if has_subtype else f"DPT-{dpt.major}"
 
     def _ml_link_ga_co(self, pairs: list[tuple[Any, int]]) -> tuple[int, list[str]]:
         """Mass Linker: link each (com-object, existing group-address id) pair. The first group

@@ -251,10 +251,10 @@ class Device:
         result: list[ComObject] = []
         for ui_co in ui_cos:
             supported = [lookup_or_make_dpt(code) for code in ui_co.dpt_codes]
-            seen: set[tuple[int, int]] = set()
+            seen: set[tuple[int, int, bool]] = set()
             unique_supported: list[DPT] = []
             for dpt in supported:
-                key = (dpt.major, dpt.minor)
+                key = (dpt.major, dpt.minor, dpt.has_subtype)
                 if key not in seen:
                     seen.add(key)
                     unique_supported.append(dpt)

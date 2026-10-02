@@ -274,6 +274,7 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         """Export the open project to a .knxproj archive at ``dest`` (with manufacturer bundle)."""
         require_project(ctx)
         warnings: list[str] = []
+        missing_refs: list[str] = []
 
         def _export() -> None:
             from editor_gui.plugins.project.knxproj_manufacturer import (
@@ -294,6 +295,8 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
                 Path(dest),
                 extra_files=bundle.extra_files,
                 master_xml=bundle.master_xml,
+                # Substitute the canonical signed master when the bundled one is unusable.
+                fetch_master=True,
             )
             if result.unverifiable_folders:
                 warnings.append(
@@ -301,13 +304,16 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
                     + ", ".join(result.unverifiable_folders)
                 )
             if result.missing_references:
+                missing_refs.extend(result.missing_references)
                 warnings.append(
                     "references missing from the manufacturer bundle: "
                     + ", ".join(result.missing_references)
                 )
 
         ctx.run_locked(_export, timeout=_SLOW)
-        out = {"status": "exported", "dest": dest}
+        # Missing references mean ETS aborts the import ("key not present"), so the archive is not a
+        # usable export: report it as incomplete rather than a success.
+        out = {"status": "incomplete" if missing_refs else "exported", "dest": dest}
         if warnings:
             out["warning"] = "ETS may reject the import — " + "; ".join(warnings)
         return out
@@ -799,7 +805,10 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         """Set (or clear, with null) a group address' datapoint type. Returns the updated GA."""
 
         def _set() -> dict[str, Any]:
-            project.set_group_address_dpt(group_address_id, dpt)
+            try:
+                project.set_group_address_dpt(group_address_id, dpt)
+            except ValueError as e:
+                raise ToolError(str(e)) from e
             g = project.get_group_address(group_address_id)
             if g is None:
                 raise ToolError(f"no group address with id {group_address_id}")

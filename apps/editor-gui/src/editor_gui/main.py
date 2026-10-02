@@ -7,6 +7,7 @@ import threading
 import time
 import webbrowser
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ from editor_gui.strings import S, get_locale, set_locale
 from editor_gui.update_check import UpdateInfo, check_for_update
 from xknxeditor.prod.errors import ArchiveError
 from xknxeditor.proj import (
+    ExportResult,
     MyKnxError,
     ProjectStorageError,
     export_knxproj,
@@ -235,8 +237,13 @@ class KnxGuiApp:
         # Transient toasts, auto-raised from warning/error log records (visible failure feedback).
         self._toasts: list[tuple[str, str, float]] = []  # (text, level, expires_at)
         self._toast_seen_ts = time.time()
-        # Set by the export worker on success; the toast renderer turns it into a green toast.
-        self._export_success_msg: str | None = None
+        # Set by the export worker on success; the render loop opens a summary window with the
+        # archive's details (size, counts, signing). Worker->render handoff via the request flag.
+        self._export_summary: ExportResult | None = None
+        self._export_summary_path = ""
+        self._export_summary_schema = ""
+        self._export_summary_at = ""
+        self._export_summary_requested = False
         # Set by the .knxprod load worker; the render loop opens a modal message box with it so a
         # catalog import gives explicit, click-to-dismiss feedback (not just a log line). _msg holds
         # the text while the modal is open (worker->render handoff via _result, latched into _msg).
@@ -530,6 +537,9 @@ class KnxGuiApp:
                     schema=self._export_schema,
                     extra_files=extra_files,
                     master_xml=master_xml,
+                    # Substitute the canonical signed master when the bundled one is unusable (e.g.
+                    # a merged, unsigned master from a legacy multi-source project).
+                    fetch_master=True,
                     certificate_signer=signer,
                     # Name the exported project after the chosen file (the in-app project has no
                     # editable name yet), so the importer shows a meaningful name instead of "New project".
@@ -537,10 +547,6 @@ class KnxGuiApp:
                 )
                 used_schema = result.schema
                 self._last_export_path = dest
-                try:
-                    size = Path(dest).stat().st_size
-                except OSError:
-                    size = 0
                 # Report the schema actually written (it follows the device product data, so it may
                 # differ from the selection -- e.g. project/20 when the catalog is schema-20-era).
                 labels = {
@@ -549,11 +555,18 @@ class KnxGuiApp:
                     "22": "ETS6",
                     "23": "ETS6 (project/23)",
                 }
-                self._export_success_msg = S.EXPORT_DONE.format(
-                    path=dest,
-                    size=_human_size(size),
-                    schema=labels.get(used_schema, f"project/{used_schema}"),
-                )
+                # An export that references manufacturer data missing from the bundle is not a
+                # usable archive (ETS aborts the import); do not report it as a success. The error
+                # below surfaces the reason. Otherwise show the success summary window (set state
+                # here on the worker thread; the modal opens on the next UI frame via the flag).
+                if not result.missing_references:
+                    self._export_summary = result
+                    self._export_summary_path = dest
+                    self._export_summary_schema = labels.get(
+                        used_schema, f"project/{used_schema}"
+                    )
+                    self._export_summary_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    self._export_summary_requested = True
                 if result.import_notes:
                     # Remind the user what the source .knxproj carried that this export omits. Set
                     # state here (worker thread); the modal opens on the next UI frame via the flag.
@@ -1726,6 +1739,69 @@ class KnxGuiApp:
             imgui.close_current_popup()
         imgui.end_popup()
 
+    def _render_export_summary_modal(self) -> None:
+        """A success window shown after a completed .knxproj export, listing the archive's details:
+        file size, device/building/group-address counts, bundled manufacturer folders, and whether
+        it carries a folder signature and a MyKnx certificate."""
+        if self._export_summary_requested:
+            imgui.open_popup(S.EXPORT_SUMMARY_TITLE)
+            self._export_summary_requested = False
+        imgui.set_next_window_size_constraints(
+            imgui.ImVec2(420.0, 0.0), imgui.ImVec2(1.0e9, 1.0e9)
+        )
+        if not imgui.begin_popup_modal(
+            S.EXPORT_SUMMARY_TITLE, None, imgui.WindowFlags_.always_auto_resize
+        )[0]:
+            return
+        summary = self._export_summary
+        if summary is None:
+            imgui.end_popup()
+            return
+        imgui.text_wrapped(
+            S.EXPORT_SUMMARY_INTRO.format(name=Path(self._export_summary_path).name)
+        )
+        imgui.spacing()
+        yes, no = S.EXPORT_SUMMARY_YES, S.EXPORT_SUMMARY_NO
+        rows = [
+            (S.EXPORT_SUMMARY_PROJECT, summary.project_name),
+            (S.EXPORT_SUMMARY_FILE_SIZE, _human_size(summary.file_size)),
+            (S.EXPORT_SUMMARY_FORMAT, self._export_summary_schema),
+            (S.EXPORT_SUMMARY_MASTER_VERSION, str(summary.master_version)),
+            (S.EXPORT_SUMMARY_EXPORTED_AT, self._export_summary_at),
+            (S.EXPORT_SUMMARY_DEVICES, str(summary.device_count)),
+            (
+                S.EXPORT_SUMMARY_TOPOLOGY,
+                f"{summary.area_count} / {summary.line_count}",
+            ),
+            (S.EXPORT_SUMMARY_BUILDINGS, str(summary.building_count)),
+            (
+                S.EXPORT_SUMMARY_FLOORS_ROOMS,
+                f"{summary.floor_count} / {summary.room_count}",
+            ),
+            (S.EXPORT_SUMMARY_GROUP_ADDRESSES, str(summary.group_address_count)),
+            (S.EXPORT_SUMMARY_GROUP_OBJECT_LINKS, str(summary.com_object_link_count)),
+            (S.EXPORT_SUMMARY_FUNCTIONS, str(summary.function_count)),
+            (S.EXPORT_SUMMARY_MANUFACTURERS, str(summary.manufacturer_count)),
+            (S.EXPORT_SUMMARY_SIGNED, yes if summary.signed else no),
+            (S.EXPORT_SUMMARY_CERTIFICATE, yes if summary.certificate else no),
+        ]
+        if imgui.begin_table("##export_summary", 2, imgui.TableFlags_.sizing_fixed_fit):
+            for label, value in rows:
+                imgui.table_next_row()
+                imgui.table_next_column()
+                imgui.text_disabled(label)
+                imgui.table_next_column()
+                imgui.text(value)
+            imgui.end_table()
+        imgui.spacing()
+        imgui.separator()
+        if imgui.button(S.EXPORT_SUMMARY_OPEN_FOLDER, imgui.ImVec2(140, 0)):
+            self._open_folder(Path(self._export_summary_path).parent)
+        imgui.same_line()
+        if imgui.button(S.EXPORT_SUMMARY_CLOSE, imgui.ImVec2(120, 0)):
+            imgui.close_current_popup()
+        imgui.end_popup()
+
     def watch_db_frame(self) -> None:
         """Dev watchdog (XKNX_DEBUG_DB_FRAMES=1): log when the render thread keeps issuing DB queries
         across frames in which the project did not change — an uncached per-frame read in a panel."""
@@ -1759,6 +1835,7 @@ class KnxGuiApp:
         self._render_about_modal()
         self._render_update_modal()
         self._render_import_notes_modal()
+        self._render_export_summary_modal()
         self._render_knxprod_result_modal()
         self._keyring_plugin.render_window()
         self._signing_plugin.render_window()
@@ -1950,10 +2027,6 @@ class KnxGuiApp:
     def _render_toasts(self) -> None:
         """Surface new warning/error log records as transient bottom-right toasts."""
         now = time.time()
-        # A completed export (set from the worker thread) shows a green success toast.
-        if self._export_success_msg is not None:
-            self._toasts.append((self._export_success_msg, "success", now + 10.0))
-            self._export_success_msg = None
         if self._mirror_notice is not None:
             self._toasts.append(
                 (

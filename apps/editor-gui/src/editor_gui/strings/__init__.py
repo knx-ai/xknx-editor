@@ -365,6 +365,90 @@ class MenuStrings:
         return _("Exported to {path} ({size}) as {schema}")
 
     @property
+    def EXPORT_SUMMARY_TITLE(self) -> str:
+        return _("Export complete")
+
+    @property
+    def EXPORT_SUMMARY_INTRO(self) -> str:
+        return _("Successfully created {name}")
+
+    @property
+    def EXPORT_SUMMARY_FILE_SIZE(self) -> str:
+        return _("File size")
+
+    @property
+    def EXPORT_SUMMARY_PROJECT(self) -> str:
+        return _("Project")
+
+    @property
+    def EXPORT_SUMMARY_FORMAT(self) -> str:
+        return _("Format")
+
+    @property
+    def EXPORT_SUMMARY_DEVICES(self) -> str:
+        return _("Devices")
+
+    @property
+    def EXPORT_SUMMARY_BUILDINGS(self) -> str:
+        return _("Buildings")
+
+    @property
+    def EXPORT_SUMMARY_GROUP_ADDRESSES(self) -> str:
+        return _("Group addresses")
+
+    @property
+    def EXPORT_SUMMARY_GROUP_OBJECT_LINKS(self) -> str:
+        return _("Group-object links")
+
+    @property
+    def EXPORT_SUMMARY_TOPOLOGY(self) -> str:
+        return _("Areas / lines")
+
+    @property
+    def EXPORT_SUMMARY_FLOORS_ROOMS(self) -> str:
+        return _("Floors / rooms")
+
+    @property
+    def EXPORT_SUMMARY_FUNCTIONS(self) -> str:
+        return _("Functions")
+
+    @property
+    def EXPORT_SUMMARY_MASTER_VERSION(self) -> str:
+        return _("KNX master version")
+
+    @property
+    def EXPORT_SUMMARY_EXPORTED_AT(self) -> str:
+        return _("Exported at")
+
+    @property
+    def EXPORT_SUMMARY_MANUFACTURERS(self) -> str:
+        return _("Manufacturer data (M folders)")
+
+    @property
+    def EXPORT_SUMMARY_SIGNED(self) -> str:
+        return _("Signed")
+
+    @property
+    def EXPORT_SUMMARY_CERTIFICATE(self) -> str:
+        return _("Certificate")
+
+    @property
+    def EXPORT_SUMMARY_YES(self) -> str:
+        return _("yes")
+
+    @property
+    def EXPORT_SUMMARY_NO(self) -> str:
+        return _("no")
+
+    @property
+    def EXPORT_SUMMARY_OPEN_FOLDER(self) -> str:
+        return _("Open folder")
+
+    @property
+    def EXPORT_SUMMARY_CLOSE(self) -> str:
+        return _("Close")
+
+    @property
     def IMPORT_NOTES_TITLE(self) -> str:
         return _("Good to know")
 

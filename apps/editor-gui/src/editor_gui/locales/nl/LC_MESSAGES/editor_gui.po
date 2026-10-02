@@ -76,3 +76,66 @@ msgstr "Productcatalogus importeren"
 
 msgid "Open Project (.knxproj/.xknx)"
 msgstr "Project openen (.knxproj/.xknx)"
+
+msgid "Export complete"
+msgstr "Export voltooid"
+
+msgid "Successfully created {name}"
+msgstr "{name} succesvol aangemaakt"
+
+msgid "File size"
+msgstr "Bestandsgrootte"
+
+msgid "Project"
+msgstr "Project"
+
+msgid "Format"
+msgstr "Formaat"
+
+msgid "Devices"
+msgstr "Apparaten"
+
+msgid "Buildings"
+msgstr "Gebouwen"
+
+msgid "Group addresses"
+msgstr "Groepsadressen"
+
+msgid "Group-object links"
+msgstr "Groepsobject-koppelingen"
+
+msgid "Areas / lines"
+msgstr "Bereiken / lijnen"
+
+msgid "Floors / rooms"
+msgstr "Verdiepingen / ruimtes"
+
+msgid "Functions"
+msgstr "Functies"
+
+msgid "KNX master version"
+msgstr "KNX-masterversie"
+
+msgid "Exported at"
+msgstr "Geëxporteerd op"
+
+msgid "Manufacturer data (M folders)"
+msgstr "Fabrikantgegevens (M-mappen)"
+
+msgid "Signed"
+msgstr "Ondertekend"
+
+msgid "Certificate"
+msgstr "Certificaat"
+
+msgid "yes"
+msgstr "ja"
+
+msgid "no"
+msgstr "nee"
+
+msgid "Open folder"
+msgstr "Map openen"
+
+msgid "Close"
+msgstr "Sluiten"

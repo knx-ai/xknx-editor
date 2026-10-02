@@ -31,10 +31,12 @@ def _dpt_codes(ref_dpts: list[str], base_dpts: list[str]) -> tuple[str, ...]:
             continue
         try:
             major = int(parts[1])
-            minor = int(parts[2]) if len(parts) >= 3 else 0
+            # A main-only "DPT-N" has no sub-number and stays distinct from "DPST-N-0";
+            # keep that distinction so the derived token is faithful (bare "N" vs "N.0").
+            minor = int(parts[2]) if len(parts) >= 3 else None
         except ValueError:
             continue
-        codes.append(f"{major}.{minor}")
+        codes.append(f"{major}.{minor}" if minor is not None else str(major))
     return tuple(codes)
 
 

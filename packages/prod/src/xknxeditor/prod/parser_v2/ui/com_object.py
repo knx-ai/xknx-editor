@@ -11,7 +11,9 @@ class UiComObject:
         str  # object function (e.g. "Switch"), distinguishes same-channel objects
     )
     number: int
-    dpt_codes: tuple[str, ...]  # e.g. "1.0", "1.1"
+    dpt_codes: tuple[
+        str, ...
+    ]  # "major.minor" for a subtype; bare "major" for main-only
     object_size: (
         str  # resolved ComObjectSize value, e.g. "1 Bit" / "1 Byte" ("" if unset)
     )
