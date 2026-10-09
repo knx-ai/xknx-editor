@@ -12,8 +12,6 @@ import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from editor_gui.device import address_order
-
 # Import from the concrete modules: the package also has a ``preflight`` submodule,
 # so ``from xknxeditor.download import preflight`` is ambiguous to type checkers.
 from xknxeditor.download.download import download, preflight
@@ -190,7 +188,7 @@ async def scan_programming_mode_devices(
     addresses = await nm_individual_address_read(xknx, timeout=timeout)
     seen: set[str] = set()
     results: list[ScannedDevice] = []
-    for address in sorted(addresses, key=lambda a: address_order(str(a))):
+    for address in addresses:
         text = str(address)
         # A device retransmits its response several times within the timeout window, so the same
         # address can appear more than once; read each device only once.

@@ -88,16 +88,6 @@ def com_object_display_name(co: ComObject) -> str:
     return f"{co.name}  ·  {function}" if function and function != co.name else co.name
 
 
-def address_order(individual_address: str | None) -> tuple[int, int, int]:
-    """Sort key for numeric individual-address order (1.0.5 before 1.0.49); a missing or invalid
-    address sorts after all valid ones."""
-    try:
-        area, line, number = (int(p) for p in (individual_address or "").split("."))
-    except ValueError:
-        return (1 << 16, 0, 0)
-    return (area, line, number)
-
-
 _co_id_counter = 0
 
 

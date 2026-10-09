@@ -10,7 +10,6 @@ from imgui_bundle import imgui
 from imgui_bundle import portable_file_dialogs as pfd
 from xknx.telegram.address import GroupAddress
 
-from editor_gui.device import address_order
 from editor_gui.plugins.keyring.strings import S
 
 if TYPE_CHECKING:
@@ -261,9 +260,7 @@ class KeyringPanel:
             imgui.end_table()
 
     def _render_devices(self, decrypted: "DecryptedKeyring") -> None:
-        devices = sorted(
-            decrypted.devices, key=lambda d: address_order(d.individual_address)
-        )
+        devices = decrypted.devices
         if not devices or not imgui.collapsing_header(
             S.KEYRING_DEVICES.format(count=len(devices))
         ):
