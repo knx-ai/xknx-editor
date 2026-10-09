@@ -5,9 +5,11 @@ render never hits the database. "Attention" is derived from the shared health ch
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from editor_gui.device import address_order
 from editor_gui.plugins.cockpit.strings import S
 from editor_gui.plugins.health.service import HealthService
 
@@ -25,17 +27,43 @@ class CockpitRow:
     order_number: str
     commissioning: str = ""  # short "loaded" label for the Loaded column
     commissioning_tooltip: str = ""  # per-flag detail + serial / last download
+    loaded_count: int = -1  # loaded commissioning flags, -1 without device info
     issues: list[str] = field(default_factory=list[str])
 
     @property
     def needs_attention(self) -> bool:
         return bool(self.issues)
 
+    @property
+    def product(self) -> str:
+        return self.product_name or self.order_number
 
-def _commissioning(info: DeviceInfo | None) -> tuple[str, str]:
-    """Return a short "loaded" label and a detailed tooltip for a device's commissioning state."""
+
+_SORT_KEYS: tuple[Callable[[CockpitRow], Any], ...] = (
+    lambda r: address_order(r.individual_address),
+    lambda r: r.name.casefold(),
+    lambda r: r.product.casefold(),
+    lambda r: r.loaded_count,
+    lambda r: len(r.issues),
+)
+
+
+def sort_rows(
+    rows: list[CockpitRow], column: int, descending: bool = False
+) -> list[CockpitRow]:
+    """``rows`` ordered by the given table column, ties by individual address."""
+    key = _SORT_KEYS[column]
+    return sorted(
+        rows,
+        key=lambda r: (key(r), address_order(r.individual_address), r.node_id),
+        reverse=descending,
+    )
+
+
+def _commissioning(info: DeviceInfo | None) -> tuple[str, str, int]:
+    """Return a short "loaded" label, a detailed tooltip and the number of loaded flags."""
     if info is None:
-        return "", ""
+        return "", "", -1
     flags = [
         (S.COCKPIT_LOADED_TOOLTIP_IA, info.individual_address_loaded),
         (S.COCKPIT_LOADED_TOOLTIP_APP, info.application_program_loaded),
@@ -57,7 +85,7 @@ def _commissioning(info: DeviceInfo | None) -> tuple[str, str]:
         lines.append(
             S.COCKPIT_LOADED_TOOLTIP_LAST_DOWNLOAD.format(when=info.last_download)
         )
-    return label, "\n".join(lines)
+    return label, "\n".join(lines), done
 
 
 class CockpitService:
@@ -88,16 +116,17 @@ class CockpitService:
         rows: list[CockpitRow] = []
         for d in self._project.devices:
             info = self._project.get_device_info(d.node_id)
-            label, tooltip = _commissioning(info)
+            label, tooltip, loaded_count = _commissioning(info)
             rows.append(
                 CockpitRow(
                     node_id=d.node_id,
                     individual_address=d.individual_address or "",
-                    name=d.name,
+                    name=d.display_name,
                     product_name=info.product_name if info else "",
                     order_number=info.order_number if info else "",
                     commissioning=label,
                     commissioning_tooltip=tooltip,
+                    loaded_count=loaded_count,
                     issues=by_device.get(d.node_id, []),
                 )
             )

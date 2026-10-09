@@ -211,6 +211,14 @@ class LinkInfo:
     is_sending: bool
 
 
+def _address_order(device: Device) -> tuple[int, int, int, int, int]:
+    """Numeric individual-address order; devices without an address come last by id."""
+    if device.address is None:
+        return (1, 0, 0, 0, device.id)
+    line = device.segment.line
+    return (0, line.area.address, line.address, device.address, device.id)
+
+
 class ProjectService:
     def __init__(self) -> None:
         self._projects: dict[str, _Open] = {}
@@ -994,10 +1002,9 @@ class ProjectService:
             .join(Line, Segment.line_id == Line.id)
             .join(Area, Line.area_id == Area.id)
             .filter(Area.installation_id == inst.id, Device.space_id.is_(None))
-            .order_by(Device.name, Device.id)
             .all()
         )
-        return [self._space_device_info(d) for d in devices]
+        return [self._space_device_info(d) for d in sorted(devices, key=_address_order)]
 
     def coupler_pass_through(
         self, project_id: str, coupler_address: int
@@ -1220,7 +1227,10 @@ class ProjectService:
                 self._space_info(child, style)
                 for child in sorted(space.children, key=lambda c: (c.order, c.id))
             ],
-            devices=[self._space_device_info(device) for device in space.devices],
+            devices=[
+                self._space_device_info(device)
+                for device in sorted(space.devices, key=_address_order)
+            ],
             functions=[
                 self._function_info(fn, style)
                 for fn in sorted(space.functions, key=lambda f: (f.order, f.id))

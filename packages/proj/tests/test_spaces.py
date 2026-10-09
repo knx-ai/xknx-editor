@@ -136,3 +136,26 @@ def test_remove_space_unassigns_devices_and_restores_on_undo(tmp_path: Path) -> 
     node = _find(_tree(svc, pid), room)
     assert node is not None and [d.id for d in node.devices] == [dev]
     assert svc.unassigned_devices(pid, 0) == []
+
+
+def test_space_devices_sorted_by_address(tmp_path: Path) -> None:
+    svc, pid = _new(tmp_path)
+    room = svc.create_space(pid, 0, "Room", "Flur")
+    area = svc.create_area(pid, 0, 2, "A")
+    line = svc.create_line(pid, area, 1, "L")
+    session = svc._state(pid).session  # type: ignore[attr-defined]
+    segment = session.query(Segment).filter_by(line_id=line).first()
+    assert segment is not None
+    ids = {
+        address: svc.add_device(
+            pid, segment.id, "M-0001_P-1", address=address, name="Aktor"
+        )
+        for address in (49, None, 5, 10)
+    }
+    expected = ["2.1.5", "2.1.10", "2.1.49", None]
+
+    assert [d.individual_address for d in svc.unassigned_devices(pid, 0)] == expected
+    for device_id in ids.values():
+        svc.set_device_space(pid, device_id, room)
+    node = _find(_tree(svc, pid), room)
+    assert [d.individual_address for d in node.devices] == expected

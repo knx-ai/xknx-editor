@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from fastmcp.exceptions import ToolError
 
+from editor_gui.device import address_order
 from editor_gui.plugins.mcp.context import McpContext, make_tool
 
 if TYPE_CHECKING:
@@ -246,5 +247,5 @@ def register(mcp: FastMCP, ctx: McpContext) -> None:
         future = service.read_programming_mode_devices()
         if future is None:
             raise ToolError("not connected")
-        addresses = future.result(timeout=timeout)
-        return {"addresses": [str(a) for a in addresses]}
+        addresses = {str(a) for a in future.result(timeout=timeout)}
+        return {"addresses": sorted(addresses, key=address_order)}

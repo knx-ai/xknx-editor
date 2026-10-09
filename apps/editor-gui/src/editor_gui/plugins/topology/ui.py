@@ -12,7 +12,7 @@ from typing import Any
 
 from imgui_bundle import imgui
 
-from editor_gui.device import Device
+from editor_gui.device import Device, address_order
 from editor_gui.plugins.topology.strings import S
 
 # Unscaled layout metrics (multiplied by the zoom factor at draw time).
@@ -110,7 +110,8 @@ class TopologyPanel:
             area_rows: list[float] = []
             for line in sorted(grouped[area], key=_key):
                 devs = sorted(
-                    grouped[area][line], key=lambda d: d.individual_address or ""
+                    grouped[area][line],
+                    key=lambda d: address_order(d.individual_address),
                 )
                 dev_rows: list[float] = []
                 for d in devs:

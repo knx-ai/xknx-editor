@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from editor_gui.concurrency import io_guarded, revision_cached
-from editor_gui.device import Device, UnloadedDevice
+from editor_gui.device import Device, UnloadedDevice, address_order
 from editor_gui.plugins.project.strings import S
 from editor_gui.plugins.project.ui.history import HistoryEntry
 from editor_gui.settings import config_dir
@@ -1054,6 +1054,10 @@ class ProjectService:
                     skipped=total - len(devices),
                     seconds=round(time.monotonic() - started, 2),
                 )
+            devices.sort(key=lambda d: (address_order(d.individual_address), d.node_id))
+            unloaded.sort(
+                key=lambda d: (address_order(d.individual_address), d.node_id)
+            )
             self._devices_cache = devices
             self._unloaded_devices = unloaded
             self._devices_cache_version = self._version

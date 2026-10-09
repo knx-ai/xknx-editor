@@ -156,3 +156,30 @@ def test_tree_orders_devices_by_address() -> None:
     ]
     ordered = sorted(devices, key=_address_order)
     assert [d.node_id for d in ordered] == [5, 2, 1, 4, 3]
+
+
+def test_project_devices_ordered_by_address(tmp_path: Path) -> None:
+    cat = CatalogService(tmp_path / "c.xknxcatalog")
+    cat.import_knxprod(_fixture())
+    product = next(p for p in cat.get_products() if p.application_id == _APP_ID)
+    app = cat.get_application(_APP_ID)
+    assert app is not None and product.hardware2program_ref_id is not None
+    proj = ProjectService(cat)
+    proj.set_logger(Logger(LogService(), "project"))
+    proj.new(tmp_path / "p.xknx")
+    ids = [
+        proj.add_device(
+            product.product_ref_id, product.hardware2program_ref_id, name, app
+        )
+        for name in ("A", "B", "C")
+    ]
+    for node_id, number in zip(ids, (49, 5, 10), strict=True):
+        assert node_id is not None
+        device = proj.find_device_by_node_id(node_id)
+        assert device is not None
+        line = device.individual_address.rsplit(".", 1)[0]
+        assert proj.set_device_individual_address(
+            node_id, device.individual_address, f"{line}.{number}"
+        )
+    assert [d.name for d in proj.devices] == ["B", "C", "A"]
+    proj.close()

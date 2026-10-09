@@ -433,7 +433,13 @@ class GroupAddressesPanel:
             imgui.text_wrapped(f"{S.GA_COMMENT}: {self._selected_ga_comment}")
 
         names = self._com_object_names()
-        assignments = self._get_assignments_for_ga(self._selected_ga_id)
+        unknown = (len(names), 0)
+        assignments = sorted(
+            self._get_assignments_for_ga(self._selected_ga_id),
+            key=lambda a: (
+                names[a.com_object_id][3] if a.com_object_id in names else unknown
+            ),
+        )
         flags = imgui.TableFlags_.borders_inner | imgui.TableFlags_.sizing_stretch_prop
         if not imgui.begin_table("##ga_assignments", 3, flags):
             return
@@ -458,7 +464,7 @@ class GroupAddressesPanel:
             if entry is None:
                 device_label, co_name, node_id = "?", "?", None
             else:
-                device_label, co_name, node_id = entry
+                device_label, co_name, node_id, _order = entry
             imgui.table_next_row()
             imgui.table_set_column_index(0)
             # Clicking a row opens the owning device in the editor (Configure panel).
@@ -483,9 +489,11 @@ class GroupAddressesPanel:
                     imgui.set_tooltip(S.GA_COL_SENDING_TOOLTIP)
         imgui.end_table()
 
-    def _com_object_names(self) -> dict[int, tuple[str, str, int]]:
-        names: dict[int, tuple[str, str, int]] = {}
-        for device in self._get_devices():
+    def _com_object_names(self) -> dict[int, tuple[str, str, int, tuple[int, int]]]:
+        """Per com-object db id: device label, object name, device node id and the row's sort
+        key (device order, object number)."""
+        names: dict[int, tuple[str, str, int, tuple[int, int]]] = {}
+        for index, device in enumerate(self._get_devices()):
             # Imported devices are often unnamed; fall back to the product name (as the
             # Devices tree does), and prefix the individual address for context.
             primary = device.display_name or "?"
@@ -497,5 +505,6 @@ class GroupAddressesPanel:
                         label,
                         com_object_display_name(co),
                         device.node_id,
+                        (index, co.number),
                     )
         return names

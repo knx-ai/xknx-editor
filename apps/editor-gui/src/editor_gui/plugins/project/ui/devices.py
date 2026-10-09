@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from imgui_bundle import imgui
 
-from editor_gui.device import Device, UnloadedDevice
+from editor_gui.device import Device, UnloadedDevice, address_order
 from editor_gui.plugins.project.strings import S
 from editor_gui.plugins.project.ui._filter import filter_box
 from editor_gui.plugins.project.ui.config_dialog import DeviceConfigDialog
@@ -13,14 +13,10 @@ TreeDevice = Device | UnloadedDevice
 _UNLOADED_COLOR = imgui.ImVec4(0.95, 0.6, 0.25, 1.0)
 
 
-def _address_order(device: TreeDevice) -> tuple[int, int, int, int]:
-    """Numeric individual-address order (1.0.4 before 1.0.5 before 1.0.49); devices without a valid
-    address keep their creation order after the addressed ones."""
-    try:
-        area, line, number = (int(p) for p in device.individual_address.split("."))
-    except ValueError:
-        return (1 << 16, 0, 0, device.node_id)
-    return (area, line, number, device.node_id)
+def _address_order(device: TreeDevice) -> tuple[tuple[int, int, int], int]:
+    """Numeric individual-address order; devices without a valid address keep their creation
+    order after the addressed ones."""
+    return (address_order(device.individual_address), device.node_id)
 
 
 @dataclass
