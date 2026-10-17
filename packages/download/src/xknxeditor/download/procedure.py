@@ -10,8 +10,10 @@ themselves - complete download, partial download and unload - follow Chapter 3/5
 
 Load State Machine control follows the property based Realisation Type 1 (writing
 load events to ``PID_LOAD_STATE_CONTROL`` of the addressed interface object, see
-Chapter 3/5/1 "Resources", section 4.23); the memory mapped variant used by very
-old (BCU) device models is out of scope.
+Chapter 3/5/1 "Resources", section 4.23) when the mask locates
+``ApplicationLoadControl`` as a system property. Masks that map that resource to
+standard memory (BIM M112, e.g. MV-0701) write the 11-octet ``LoadControl_M112``
+record at the shared control address and poll the matching LoadStatus byte.
 
 Connection handling follows the point-to-point management connection lifecycle: the transport connection is
 opened on a Connect control and closed on Disconnect; a Restart tears it down
@@ -108,6 +110,7 @@ from .merge import resolve_download_controls
 from .preflight import PreflightReport, PropertyDiff, SegmentDiff
 from .programmer import DEFAULT_MAX_APDU_LENGTH, PID_TABLE_REFERENCE, DeviceProgrammer
 from .property_layout import STANDARD_WRITE_WIDTHS, property_width
+from .resources import bundled_mask_resources
 from .scope import (
     GROUP_COMMUNICATION_OBJECTS,
     DownloadScope,
@@ -344,6 +347,7 @@ class LoadProcedureRunner:
         apdu_overhead: int = 0,
         authorize_levels: int = 0,
         memory_service_count: int | None = None,
+        property_services: bool = True,
     ) -> None:
         """Initialize the runner.
 
@@ -380,6 +384,9 @@ class LoadProcedureRunner:
             tuple[LdCtrlMemAddrSpace | int | None, int], int
         ] = {}
         self._enable_segment_write = True
+        # Inline WriteMem (ADM1 WriteDirect) is read back when this stays true.
+        # Procedures that never set the variable keep today's Verify behaviour.
+        self._enable_verify_on_write_direct = True
         self._property_widths: dict[tuple[int, int], int] = {}
         # Property controls addressed by object type use the extended property services when
         # the application supports them; they get a negative key in place of an object index,
@@ -411,6 +418,8 @@ class LoadProcedureRunner:
         self._descriptor_checked = False
         self._negotiated_apdu: int | None = None
         self._authorize_levels = authorize_levels
+        # BCU1 has no interface-object properties. Leave this on for every other mask.
+        self._property_services = property_services
         # Optional lowered cap on the classic memory-service payload (a no-ACK
         # fallback); None keeps the programmer's APDU-derived default.
         self._memory_service_count = memory_service_count
@@ -438,6 +447,7 @@ class LoadProcedureRunner:
         self._property_captures.clear()
         self._memory_captures.clear()
         self._enable_segment_write = True
+        self._enable_verify_on_write_direct = True
         self._error_mappings.clear()
         total = len(in_scope)
         logger.info(
@@ -554,6 +564,7 @@ class LoadProcedureRunner:
         self._property_captures.clear()
         self._memory_captures.clear()
         self._enable_segment_write = True
+        self._enable_verify_on_write_direct = True
         self._error_mappings.clear()
         logger.info(
             "download preflight start: %s, %d of %d load controls in scope",
@@ -584,12 +595,18 @@ class LoadProcedureRunner:
         address: int,
         size: int,
         space: LdCtrlMemAddrSpace = LdCtrlMemAddrSpace.STANDARD,
+        *,
+        include_initialized: bool | None = None,
     ) -> list[tuple[int, bytes]] | None:
+        if include_initialized is None:
+            include_initialized = self.scope in (
+                DownloadScope.FULL,
+                DownloadScope.APPLICATION,
+            )
         runs = self.image.masked_writes(
             address,
             size,
-            include_initialized=self.scope
-            in (DownloadScope.FULL, DownloadScope.APPLICATION),
+            include_initialized=include_initialized,
         )
         if (
             space is LdCtrlMemAddrSpace.LC_FILTER
@@ -687,9 +704,9 @@ class LoadProcedureRunner:
                 )
             if isinstance(control, LdCtrlLoadImageRelMem):
                 captured_objects.add(control.obj_idx)
-            if (
-                isinstance(control, LdCtrlSetControlVariable)
-                and control.name is not LdCtrlControlVariable.ENABLE_SEGMENT_WRITE
+            if isinstance(control, LdCtrlSetControlVariable) and control.name not in (
+                LdCtrlControlVariable.ENABLE_SEGMENT_WRITE,
+                LdCtrlControlVariable.ENABLE_VERIFY_ON_WRITE_DIRECT,
             ):
                 raise UnsupportedProcedureError(
                     f"unsupported control variable {control.name.value}"
@@ -802,6 +819,8 @@ class LoadProcedureRunner:
             self._programmer.table_reference_width = 4
         if self._memory_service_count is not None:
             self._programmer.max_memory_service_count = self._memory_service_count
+        if not self._property_services:
+            self._programmer.skip_property_verify_probe()
         await self._prepare_device(self._programmer)
         return self._programmer
 
@@ -829,16 +848,21 @@ class LoadProcedureRunner:
             logger.info("device mask confirmed: descriptor %#06x", actual)
         if self._negotiate_apdu:
             if self._negotiated_apdu is None:
-                device_max = await programmer.read_max_apdu_length()
-                self._negotiated_apdu = max(
-                    DEFAULT_MAX_APDU_LENGTH,
-                    min(device_max, self._max_apdu_length),
-                )
-                logger.info(
-                    "negotiated APDU length: %d (device reports %d)",
-                    self._negotiated_apdu,
-                    device_max,
-                )
+                if self._property_services:
+                    device_max = await programmer.read_max_apdu_length()
+                    self._negotiated_apdu = max(
+                        DEFAULT_MAX_APDU_LENGTH,
+                        min(device_max, self._max_apdu_length),
+                    )
+                    logger.info(
+                        "negotiated APDU length: %d (device reports %d)",
+                        self._negotiated_apdu,
+                        device_max,
+                    )
+                else:
+                    # BCU1 APDU length is the classic 15 octets. Property 56
+                    # does not exist there; reading it times out.
+                    self._negotiated_apdu = DEFAULT_MAX_APDU_LENGTH
             programmer.max_apdu_length = self._negotiated_apdu
         if self._authorize_levels > 0:
             # Access protection is per connection, so authorize on every open (a
@@ -915,6 +939,51 @@ class LoadProcedureRunner:
             ),
         )
 
+    def _memory_lsm(self, index: int) -> tuple[int, int | None] | None:
+        """Return ``(control_address, status_address)`` for a memory-mapped LSM.
+
+        BIM M112 shares one load-control address. ``status_address`` is ``None``
+        when the mask has no LoadStatus resource for ``index`` (PEI on MV-0701);
+        the control write still goes through memory, without a status poll.
+        Property-mapped masks (and LSM index 0) return ``None``.
+        """
+        if index < 1:
+            return None
+        resources = bundled_mask_resources(self.application.program.mask_version)
+        if resources is None:
+            return None
+        mapped = resources.memory_mapped_lsm()
+        if mapped is None:
+            return None
+        control, _status_lsm1 = mapped
+        return control, resources.memory_mapped_lsm_status(index)
+
+    async def _emit_load_event(
+        self,
+        index: int,
+        event: bytes,
+        expected: load_state.LoadState,
+        *,
+        also_accept: load_state.LoadState | None = None,
+    ) -> None:
+        """Write a load event through the mask's LSM realisation."""
+        programmer = await self._bus()
+        mapped = self._memory_lsm(index)
+        if mapped is not None:
+            control_addr, status_addr = mapped
+            await programmer.send_memory_load_event(
+                index,
+                control_addr,
+                status_addr,
+                event,
+                expected,
+                also_accept=also_accept,
+            )
+            return
+        await programmer.send_load_event(
+            index, event, expected, also_accept=also_accept
+        )
+
     async def _execute(self, control: object) -> None:
         """Dispatch a single Load Control to the matching bus operation."""
         where = f" [{self._position[0]}/{self._position[1]}]" if self._position else ""
@@ -926,6 +995,9 @@ class LoadProcedureRunner:
             )
             return
         if isinstance(control, LdCtrlSetControlVariable):
+            if control.name is LdCtrlControlVariable.ENABLE_VERIFY_ON_WRITE_DIRECT:
+                self._enable_verify_on_write_direct = control.value
+                return
             if control.name is not LdCtrlControlVariable.ENABLE_SEGMENT_WRITE:
                 raise UnsupportedProcedureError(
                     f"unsupported control variable {control.name.value}"
@@ -934,8 +1006,7 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlMaxLength):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index,
                 load_state.relative_allocation(control.size),
                 load_state.LoadState.LOADING,
@@ -976,18 +1047,16 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlUnload):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index, load_state.unload(), load_state.LoadState.UNLOADED
             )
             return
         if isinstance(control, LdCtrlLoad):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
             # Some present objects (DIMinBOX, issue #24) keep reporting LOADED
             # after accepting START_LOADING. Allow that result for this control;
             # allocation events and LoadCompleted still verify their own states.
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index,
                 load_state.start_loading(),
                 load_state.LoadState.LOADING,
@@ -996,8 +1065,7 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlLoadCompleted):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index, load_state.load_complete(), load_state.LoadState.LOADED
             )
             return
@@ -1071,8 +1139,7 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlRelSegment):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index,
                 load_state.data_relative_allocation(
                     control.size, mode=control.mode, fill=control.fill
@@ -1085,8 +1152,7 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlTaskPtr):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index,
                 load_state.task_pointer(
                     control.init_ptr, control.save_ptr, control.serial_ptr
@@ -1096,8 +1162,7 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlTaskCtrl1):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index,
                 load_state.task_control_1(control.address, control.count),
                 load_state.LoadState.LOADING,
@@ -1105,8 +1170,7 @@ class LoadProcedureRunner:
             return
         if isinstance(control, LdCtrlTaskCtrl2):
             index = await self._resolve_index(control)
-            programmer = await self._bus()
-            await programmer.send_load_event(
+            await self._emit_load_event(
                 index,
                 load_state.task_control_2(
                     control.callback, control.address, control.seg0, control.seg1
@@ -1143,6 +1207,17 @@ class LoadProcedureRunner:
             return
         raise self._unsupported(control)
 
+    def _direct_memory_verify(self, control: LdCtrlWriteMem) -> bool:
+        """Whether this WriteMem is read back after the write.
+
+        ``EnableVerifyOnWriteDirect`` gates inline writes only (ADM1 WriteDirect).
+        Image-backed writes keep the control's own Verify attribute. The flag
+        defaults to enabled, so a procedure that never sets it still verifies.
+        """
+        if control.inline_data is not None and not self._enable_verify_on_write_direct:
+            return False
+        return bool(control.verify)
+
     async def _write_mem(self, control: LdCtrlWriteMem) -> None:
         """Write a WriteMem control to memory.
 
@@ -1156,15 +1231,16 @@ class LoadProcedureRunner:
                 f"no image data for address range {control.address:#06x}.."
                 f"{control.address + control.size:#06x}"
             )
+        verify = self._direct_memory_verify(control)
         logger.debug(
             "write_mem image-backed: addr=%#06x size=%d runs=%d verify=%s",
             control.address,
             control.size,
             len(runs),
-            control.verify,
+            verify,
         )
         for address, data in runs:
-            await programmer.write_memory(address, data, verify=control.verify)
+            await programmer.write_memory(address, data, verify=verify)
 
     async def _write_rel_mem(self, control: LdCtrlWriteRelMem) -> None:
         """Write a WriteRelMem control relative to the object's table base.
@@ -1199,7 +1275,10 @@ class LoadProcedureRunner:
 
     async def _memory_programmer(self) -> DeviceProgrammer:
         programmer = await self._bus()
-        if self.application.program.mask_version == "MV-07B0":
+        if (
+            self._property_services
+            and self.application.program.mask_version == "MV-07B0"
+        ):
             await programmer.enable_memory_auto_verify()
         return programmer
 
@@ -1888,25 +1967,28 @@ class LoadProcedureRunner:
         """
         segment_type = load_state.SegmentType(control.seg_type)
         index = await self._resolve_index(control)
-        programmer = await self._bus()
-        await programmer.send_load_event(
+        event = load_state.alloc_absolute_segment(
+            segment_type,
+            control.address,
+            control.size,
+            access_attributes=control.access,
+            memory_type=control.mem_type,
+            memory_attributes=control.seg_flags,
+        )
+        await self._emit_load_event(
             index,
-            load_state.alloc_absolute_segment(
-                segment_type,
-                control.address,
-                control.size,
-                access_attributes=control.access,
-                memory_type=control.mem_type,
-                memory_attributes=control.seg_flags,
-            ),
+            event,
             load_state.LoadState.LOADING,
         )
         # Per the KNX Load Controls (KNX Standard v3.0.0, 2/3/1) an AbsSegment
         # allocation is followed by a verified memory write of the segment data -
         # but only the bytes the image actually produced (its mask). Bytes the
         # encoder did not write stay at their current device value.
+        # Allocation defines the checksum range. A partial download's parameter
+        # mask alone would skip the application-code seed (n_runs=0) and leave
+        # the BCU with an empty or stale segment after AllocAbsDataSeg.
         runs = (
-            self._memory_runs(control.address, control.size)
+            self._memory_runs(control.address, control.size, include_initialized=True)
             if self._enable_segment_write
             else []
         )
@@ -1918,14 +2000,27 @@ class LoadProcedureRunner:
     async def _task_segment(self, control: LdCtrlTaskSegment) -> None:
         """Allocate the task segment via a load event."""
         index = await self._resolve_index(control)
-        programmer = await self._bus()
-        await programmer.send_load_event(
+        mapped = self._memory_lsm(index)
+        # MV-0701 has no PEI LoadStatus; ETS skips this AllocAbsTask (LSM 5
+        # would otherwise remap the group-object table at 0x4400).
+        if mapped is not None and mapped[1] is None:
+            return
+        application_id = _application_id(self.application)
+        static = getattr(self.application.program, "static", None)
+        options = getattr(static, "options", None) if static is not None else None
+        patch = mapped is not None or (
+            options is not None and options.legacy_patch_manufacturer_id_in_task_segment
+        )
+        if patch:
+            application_id = (0x0002).to_bytes(2, "big") + application_id[2:]
+        event = load_state.alloc_task_segment(
+            control.address,
+            self.application.program.pei_type,
+            application_id,
+        )
+        await self._emit_load_event(
             index,
-            load_state.alloc_task_segment(
-                control.address,
-                self.application.program.pei_type,
-                _application_id(self.application),
-            ),
+            event,
             load_state.LoadState.LOADING,
         )
 
@@ -1980,7 +2075,11 @@ class LoadProcedureRunner:
             # by _abs_segment, so it is a clean allocate-only preview here too, not an error.
             if self._enable_segment_write:
                 await self._diff_masked(
-                    control.address, control.size, segments, missing_ok=True
+                    control.address,
+                    control.size,
+                    segments,
+                    missing_ok=True,
+                    include_initialized=True,
                 )
             return
         if isinstance(control, LdCtrlWriteProp):
@@ -2050,6 +2149,7 @@ class LoadProcedureRunner:
         segments: list[SegmentDiff],
         *,
         missing_ok: bool = False,
+        include_initialized: bool | None = None,
     ) -> None:
         """Diff each masked write run the image would apply within ``[address, size)``.
 
@@ -2065,7 +2165,7 @@ class LoadProcedureRunner:
         allocated and left unwritten, not an error. So the AbsSegment diff passes ``missing_ok=True``
         and a ``None`` there is a clean, allocate-only preview, exactly as the download behaves.
         """
-        runs = self._memory_runs(address, size)
+        runs = self._memory_runs(address, size, include_initialized=include_initialized)
         if runs is None:
             if missing_ok:
                 return
